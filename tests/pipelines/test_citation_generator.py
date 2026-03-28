@@ -1,6 +1,8 @@
 """Tests for app/pipelines/citation_generator.py (T025.d)."""
 from __future__ import annotations
 
+import dataclasses
+
 from app.pipelines.citation_generator import (
     Citation,
     GenerationResult,
@@ -151,6 +153,18 @@ class TestTextCitations:
         citation = Citation(chunk_id="c1", quote="some text")
         assert hasattr(citation, "quote")
         assert not hasattr(citation, "excerpt")
+
+    def test_citation_field_is_named_quote(self):
+        # Structural guard: dataclasses.fields() is authoritative — hasattr passes even
+        # if a property or __getattr__ shim fakes the name.
+        field_names = {f.name for f in dataclasses.fields(Citation)}
+        assert "quote" in field_names
+
+    def test_citation_has_no_excerpt_field(self):
+        # Structural guard: ensures the rename from `excerpt` to `quote` is permanent
+        # at the dataclass level, not just masked by an attribute alias.
+        field_names = {f.name for f in dataclasses.fields(Citation)}
+        assert "excerpt" not in field_names
 
     def test_empty_chunks_empty_citations(self):
         result = generate_answer("q", [], [_triple("a", "R", "b")])
