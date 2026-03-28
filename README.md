@@ -1,15 +1,20 @@
 # GraphRAG Assistant
 
 GraphRAG Assistant answers relationship-heavy enterprise queries over procurement and
-contract data by combining graph traversal with constrained vector retrieval. Pure
-embedding similarity search treats every text chunk as independent — it cannot reliably
-answer questions like "who directs the suppliers on contract K001?" because no single
-chunk contains all required facts across companies, directors, and clauses. This system
-resolves named entities from the question (companies, persons, contracts) against a
-Neo4j property graph, traverses typed edges (DIRECTOR_OF, SUPPLIES, PARTY_TO,
-HAS_CLAUSE) to collect graph evidence, then restricts vector search to chunks reachable
-from those entities. The result: multi-hop answers supported by both graph facts and
-verbatim text citations, with a plain-RAG baseline for head-to-head comparison.
+contract data by combining graph traversal with constrained vector retrieval.
+
+**It can answer questions like:** "Who directs the suppliers on contract K001?" — where
+the answer requires crossing Company → Contract → Supplier → Director relationships
+that no single text chunk contains. Pure embedding similarity search cannot reliably
+answer these; it treats every chunk as independent and has no way to follow typed graph
+edges. GraphRAG can, deterministically.
+
+It works by resolving named entities from the question (companies, persons, contracts)
+against a Neo4j property graph, traversing typed edges (DIRECTOR_OF, SUPPLIES,
+PARTY_TO, HAS_CLAUSE) to collect graph evidence, then restricting vector search to
+chunks reachable from those entities. The result: multi-hop answers supported by both
+graph facts and verbatim text citations, with a plain-RAG baseline for head-to-head
+comparison.
 
 ## Architecture
 
