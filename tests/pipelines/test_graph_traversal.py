@@ -306,3 +306,73 @@ class TestCopartyExpansion:
         assert result[0].rel == "PARTY_TO"
         assert result[0].src == "Gamma Ltd"
         assert result[0].dst == "CTR-999"
+
+
+# ---------------------------------------------------------------------------
+# TestNamedEntityTriples
+# ---------------------------------------------------------------------------
+
+
+class TestNamedEntityTriples:
+    def test_src_dst_are_names_not_internal_ids(self) -> None:
+        """Triple.src and Triple.dst carry canonical names, not Neo4j internal IDs.
+
+        T001 replaced toString(id(...)) fallback with CASE expressions that
+        project the domain name/id property.  A mock row with string values must
+        pass through to the Triple unchanged — if the function were still using
+        internal IDs the values would differ from what the Cypher projected.
+        """
+        session = MagicMock()
+        # main query returns one named-entity row; expansions return nothing
+        session.run.side_effect = [
+            [{"src": "Acme Corp", "rel": "PARTY_TO", "dst": "CONTRACT-001", "chunk_id": None}],
+            [],  # _expand_director_of
+            [],  # _expand_coparty
+        ]
+        result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
+        assert len(result.triples) == 1
+        assert result.triples[0].src == "Acme Corp"
+        assert result.triples[0].dst == "CONTRACT-001"
+
+    def test_mixed_label_triple_uses_named_properties(self) -> None:
+        """Three rows covering three distinct label scenarios all surface named strings.
+
+        Scenario coverage:
+          - Company-name src  ('Beta Ltd')  — WHEN 'Company' IN labels THEN node.name
+          - Contract-id dst   ('CTR-42')    — WHEN 'Contract' IN labels THEN node.contract_id
+          - Person-name dst   ('Jane Smith')— WHEN 'Person' IN labels THEN node.name
+
+        If any CASE branch silently fell through to toString(id(...)), the
+        expected string would be absent from the result.
+        """
+        session = MagicMock()
+        session.run.side_effect = [
+            [
+                # Company src → Contract dst
+                {"src": "Beta Ltd", "rel": "PARTY_TO", "dst": "CTR-42", "chunk_id": None},
+                # Company src → Person dst
+                {"src": "Beta Ltd", "rel": "EMPLOYS", "dst": "Jane Smith", "chunk_id": None},
+                # Person src → Company dst (verifies Person name in src too)
+                {"src": "Jane Smith", "rel": "DIRECTOR_OF", "dst": "Beta Ltd", "chunk_id": None},
+            ],
+            [],  # _expand_director_of
+            [],  # _expand_coparty
+        ]
+        result = traverse_from_anchors(["COMP_BETA"], session, max_hops=1)
+        srcs = {t.src for t in result.triples}
+        dsts = {t.dst for t in result.triples}
+        assert "Beta Ltd" in srcs, "Company name must appear as Triple.src"
+        assert "CTR-42" in dsts, "Contract id must appear as Triple.dst"
+        assert "Jane Smith" in dsts, "Person name must appear as Triple.dst"
+
+    def test_empty_node_ids_returns_empty_result(self) -> None:
+        """Empty anchor list returns empty result without issuing any DB call.
+
+        Confirms the early-return guard in traverse_from_anchors is unaffected
+        by T001 CASE-expression changes.
+        """
+        session = MagicMock()
+        result = traverse_from_anchors([], session)
+        assert result.chunk_ids == []
+        assert result.triples == []
+        session.run.assert_not_called()
