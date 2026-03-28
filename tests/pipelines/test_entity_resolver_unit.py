@@ -81,3 +81,51 @@ def test_entity_resolver_ambiguous_name() -> None:
     results = resolve_entities('"Global"', session, top_k=5)
     assert len(results) >= 2
     assert len(results) == 2
+
+
+def _session_returning_for_label(label_keyword: str, rows: list[dict]) -> MagicMock:
+    """Return a mock session that yields *rows* only when the Cypher mentions *label_keyword*.
+
+    All other label queries return an empty list, ensuring the EntityMatch label
+    field reflects the correct _LABEL_QUERIES key rather than whichever label
+    happens to run first.
+    """
+    session = MagicMock()
+    session.run.side_effect = lambda cypher, **_kwargs: (
+        rows if label_keyword in cypher else []
+    )
+    return session
+
+
+def test_clause_id_candidate_resolves_to_clause_entity_match() -> None:
+    """Exact clause_id string resolves to a Clause EntityMatch with label='Clause'."""
+    # Only the Clause query returns a row; all other label queries return empty.
+    # This ensures the EntityMatch.label is set from the 'Clause' key, not a
+    # coincidentally-first label that also received the mocked row.
+    session = _session_returning_for_label(
+        ":Clause",
+        [{"node_id": "CL-042", "name": "CL-042"}],
+    )
+    results = resolve_entities('"CL-042"', session, top_k=5)
+    assert len(results) >= 1
+    clause_match = next((r for r in results if r.node_id == "CL-042"), None)
+    assert clause_match is not None, "Expected a match for clause_id CL-042"
+    assert clause_match.label == "Clause"
+    assert clause_match.score == 1.0  # candidate == name → exact match
+
+
+def test_clause_type_keyword_candidate_resolves_to_clause_entity_match() -> None:
+    """Clause type keyword resolves via forward CONTAINS to a Clause EntityMatch.
+
+    Simulates: candidate 'termination' matches a Clause node whose clause_type
+    is 'Termination Clause' via the forward CONTAINS branch.
+    """
+    session = _session_returning_for_label(
+        ":Clause",
+        [{"node_id": "CL-007", "name": "CL-007"}],
+    )
+    results = resolve_entities('"termination"', session, top_k=5)
+    assert len(results) >= 1
+    clause_match = next((r for r in results if r.node_id == "CL-007"), None)
+    assert clause_match is not None, "Expected a match for termination clause keyword"
+    assert clause_match.label == "Clause"

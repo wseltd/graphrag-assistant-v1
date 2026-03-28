@@ -76,6 +76,17 @@ _LABEL_QUERIES: dict[str, str] = {
         "WHERE toLower(n.title) CONTAINS toLower($candidate) "
         "RETURN n.contract_id AS node_id, n.title AS name"
     ),
+    # Exact clause_id match handles structured IDs (e.g. "CL-001") that would
+    # fail toLower CONTAINS on clause_type when clause_type is absent or differs.
+    # Bidirectional CONTAINS covers both "termination" → "Termination Clause"
+    # (forward) and "Payment Terms and Conditions" → "payment" (reverse).
+    "Clause": (
+        "MATCH (n:Clause) "
+        "WHERE n.clause_id = $candidate "
+        "OR toLower(n.clause_type) CONTAINS toLower($candidate) "
+        "OR toLower($candidate) CONTAINS toLower(n.clause_type) "
+        "RETURN n.clause_id AS node_id, 'Clause' AS label, n.clause_id AS name"
+    ),
 }
 
 
