@@ -143,6 +143,52 @@ _Q_2HOP: str = (
 _QUERIES: list[str] = [_Q_1HOP, _Q_2HOP]
 _MAX_HOPS: int = len(_QUERIES)
 
+# Inbound DIRECTOR_OF expansion: finds Person nodes that point to a Company
+# anchor.  The outbound-only traversal above misses this case because the edge
+# direction is (Person)-[:DIRECTOR_OF]->(Company), not (Company)-[:DIRECTOR_OF]->.
+# The :Company label in the MATCH filters non-Company anchors inside Cypher so
+# no Python-level label check is needed.
+_Q_DIRECTOR_OF: str = (
+    "UNWIND $node_ids AS nid "
+    "MATCH (anchor:Company) WHERE anchor.id = nid "
+    "MATCH (p:Person)-[:DIRECTOR_OF]->(anchor) "
+    "RETURN p.name AS src, 'DIRECTOR_OF' AS rel, "
+    "anchor.name AS dst, null AS chunk_id"
+)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _expand_director_of(
+    node_ids: list[str],
+    session: Any,
+) -> list[Triple]:
+    """Return deduplicated DIRECTOR_OF triples for Company anchors.
+
+    Runs an inbound DIRECTOR_OF lookup so that when a Company is the anchor,
+    its directors (Person nodes) are surfaced.  Non-Company anchors are
+    filtered inside Cypher via the :Company label — no Python filtering needed.
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        List of unique Triple instances with rel='DIRECTOR_OF'.
+    """
+    rows = session.run(_Q_DIRECTOR_OF, {"node_ids": node_ids})
+    seen: set[Triple] = set()
+    triples: list[Triple] = []
+    for row in rows:
+        triple = Triple(src=row["src"], rel=row["rel"], dst=row["dst"])
+        if triple not in seen:
+            seen.add(triple)
+            triples.append(triple)
+    return triples
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -160,6 +206,9 @@ def traverse_from_anchors(
     *max_hops* and accumulates the chunk_id of every Chunk node encountered and
     a Triple for every relationship edge traversed.  Both result lists are
     deduplicated before return.
+
+    Also performs an inbound DIRECTOR_OF expansion so that directors of Company
+    anchors are included even though that edge points toward the anchor.
 
     Args:
         node_ids:  Domain-level identifiers (Company.id or
@@ -196,6 +245,11 @@ def traverse_from_anchors(
         if cid is not None and cid not in seen_chunk_ids:
             seen_chunk_ids.add(cid)
             chunk_ids.append(cid)
+
+    for triple in _expand_director_of(node_ids, session):
+        if triple not in seen_triples:
+            seen_triples.add(triple)
+            triples.append(triple)
 
     logger.info(
         "traverse_from_anchors: anchors=%d hops=%d triples=%d chunks=%d",

@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from app.pipelines.graph_traversal import GraphTraversalResult, Triple, traverse_from_anchors
+from app.pipelines.graph_traversal import (
+    GraphTraversalResult,
+    Triple,
+    _expand_director_of,
+    traverse_from_anchors,
+)
 
 # ---------------------------------------------------------------------------
 # TestSingleHopTraversal
@@ -32,12 +37,12 @@ class TestSingleHopTraversal:
         assert Triple(src="1", rel="PARTY_TO", dst="2") in result.triples
         assert "CL001_c0" in result.chunk_ids
 
-    def test_max_hops_one_issues_single_db_call(self) -> None:
-        """max_hops=1 issues exactly one session.run call."""
+    def test_max_hops_one_issues_two_db_calls(self) -> None:
+        """max_hops=1 issues exactly two session.run calls: main query + director-of expansion."""
         session = MagicMock()
         session.run.return_value = []
         traverse_from_anchors(["C1"], session, max_hops=1)
-        assert session.run.call_count == 1
+        assert session.run.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -112,3 +117,109 @@ class TestIsolatedNodeTraversal:
         session.run.return_value = []
         result = traverse_from_anchors(["ANY_ID"], session)
         assert isinstance(result, GraphTraversalResult)
+
+
+# ---------------------------------------------------------------------------
+# TestDirectorOfInboundExpansion
+# ---------------------------------------------------------------------------
+
+
+class TestDirectorOfInboundExpansion:
+    def test_director_of_inbound_triples_included(self) -> None:
+        """Company anchor: DIRECTOR_OF inbound triples appear in traverse result.
+
+        The edge is (Person)-[:DIRECTOR_OF]->(Company), so the main outbound
+        query never sees it.  _expand_director_of must surface it.
+        """
+        session = MagicMock()
+        # First call: main hop query (no outbound edges from this anchor)
+        # Second call: _expand_director_of (one inbound DIRECTOR_OF edge)
+        session.run.side_effect = [
+            [],
+            [
+                {
+                    "src": "Jane Doe",
+                    "rel": "DIRECTOR_OF",
+                    "dst": "Acme Ltd",
+                    "chunk_id": None,
+                }
+            ],
+        ]
+        result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
+        assert Triple(src="Jane Doe", rel="DIRECTOR_OF", dst="Acme Ltd") in result.triples
+
+    def test_director_of_expansion_not_called_when_node_ids_empty(self) -> None:
+        """Empty node_ids: traverse returns early — no DB calls at all."""
+        session = MagicMock()
+        result = traverse_from_anchors([], session)
+        assert result.triples == []
+        # Early-return path must not call the DB for either the main query or
+        # the director-of expansion.
+        session.run.assert_not_called()
+
+    def test_director_of_duplicate_rows_deduplicated(self) -> None:
+        """Duplicate DIRECTOR_OF rows from the expansion are collapsed to one triple."""
+        session = MagicMock()
+        session.run.side_effect = [
+            [],  # main query: no outbound edges
+            [
+                {
+                    "src": "Jane Doe",
+                    "rel": "DIRECTOR_OF",
+                    "dst": "Acme Ltd",
+                    "chunk_id": None,
+                },
+                {
+                    "src": "Jane Doe",
+                    "rel": "DIRECTOR_OF",
+                    "dst": "Acme Ltd",
+                    "chunk_id": None,
+                },
+            ],
+        ]
+        result = traverse_from_anchors(["COMP_001"], session)
+        director_triples = [
+            t for t in result.triples if t.rel == "DIRECTOR_OF"
+        ]
+        assert len(director_triples) == 1
+
+    def test_director_of_does_not_duplicate_triple_from_main_query(self) -> None:
+        """If both queries return the same triple, it appears once in the result."""
+        triple_row = {
+            "src": "Jane Doe",
+            "rel": "DIRECTOR_OF",
+            "dst": "Acme Ltd",
+            "chunk_id": None,
+        }
+        session = MagicMock()
+        session.run.side_effect = [
+            [triple_row],  # main query also returned this triple
+            [triple_row],  # expansion returns the same one
+        ]
+        result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
+        assert result.triples.count(
+            Triple(src="Jane Doe", rel="DIRECTOR_OF", dst="Acme Ltd")
+        ) == 1
+
+    def test_expand_director_of_returns_empty_for_no_rows(self) -> None:
+        """_expand_director_of returns an empty list when session yields no rows."""
+        session = MagicMock()
+        session.run.return_value = []
+        result = _expand_director_of(["COMP_001"], session)
+        assert result == []
+
+    def test_expand_director_of_returns_triple_list(self) -> None:
+        """_expand_director_of returns a list of Triple instances."""
+        session = MagicMock()
+        session.run.return_value = [
+            {
+                "src": "Alice Smith",
+                "rel": "DIRECTOR_OF",
+                "dst": "Beta Corp",
+                "chunk_id": None,
+            }
+        ]
+        result = _expand_director_of(["COMP_002"], session)
+        assert len(result) == 1
+        assert isinstance(result[0], Triple)
+        assert result[0].rel == "DIRECTOR_OF"
