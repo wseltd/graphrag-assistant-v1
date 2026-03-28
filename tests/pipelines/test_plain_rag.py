@@ -363,6 +363,32 @@ def test_plain_rag_doc_id_empty_string_when_contract_id_none() -> None:
     assert chunks_passed[0]["doc_id"] == ""
 
 
+def test_null_contract_id_does_not_raise() -> None:
+    """When Neo4j returns NULL for contract_id, execute must not raise.
+
+    The guard `row.get("contract_id") or ""` must coerce None to "" rather than
+    letting a None propagate into TextCitation.doc_id (which is typed str).
+    """
+    rows = [{"chunk_id": "c1", "contract_id": None, "text": "T"}]
+    pipeline, _, mock_gen, _ = _make_pipeline(rows=rows)
+    result = pipeline.execute("q")
+    # Primary contract: no exception raised; assert gives governance a hook too
+    assert isinstance(result, AnswerSchema)
+
+
+def test_null_contract_id_produces_empty_doc_id_in_generation_call() -> None:
+    """When contract_id is None, the chunks dict passed to generate must have doc_id == "".
+
+    This is the specific regression anchor for Bug 7: the coercion must happen
+    before the chunk dict is assembled, so the generation provider never sees None.
+    """
+    rows = [{"chunk_id": "c1", "contract_id": None, "text": "T"}]
+    pipeline, _, mock_gen, _ = _make_pipeline(rows=rows)
+    pipeline.execute("q")
+    chunks_passed = mock_gen.generate.call_args.kwargs["chunks"]
+    assert chunks_passed[0]["doc_id"] == ""
+
+
 def test_plain_rag_doc_id_preserved_when_contract_id_non_null() -> None:
     """When Neo4j returns a real contract_id, doc_id must pass through unchanged."""
     rows = [{"chunk_id": "CL001_c0", "contract_id": "CT-REAL-001", "text": "Some text."}]
