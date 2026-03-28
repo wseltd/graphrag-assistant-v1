@@ -16,3 +16,4 @@ saturnday-state.json
 saturnday-progress.log
 .saturnday/
 .saturnday-repair-*/
+.saturnday-policy.yaml
