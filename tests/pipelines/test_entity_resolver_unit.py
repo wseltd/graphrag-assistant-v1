@@ -200,3 +200,44 @@ def test_partial_city_candidate_resolves_to_address_entity_match() -> None:
     assert address_match is not None, "Expected a match for partial city candidate 'Berl'"
     assert address_match.label == "Address"
     assert address_match.score < 1.0  # partial CONTAINS → overlap ratio < 1
+
+
+def test_city_exact_match_resolves_to_address_node() -> None:
+    """Exact city name resolves to an Address EntityMatch (label='Address').
+
+    Exercises the equality branch of the bidirectional CONTAINS check:
+    toLower(n.city) CONTAINS toLower($candidate) where candidate == city.
+
+    Before Bug 13 fix: no Address entry in _LABEL_QUERIES → no Address Cypher
+    runs → result is empty → test fails.
+    After fix: Address Cypher executes, row returned, EntityMatch produced.
+    """
+    session = _session_returning_for_label(
+        ":Address",
+        [{"node_id": "ADDR-001", "name": "Berlin"}],
+    )
+    results = resolve_entities('"Berlin"', session, top_k=5)
+    assert any(m.label == "Address" for m in results), (
+        "Expected at least one EntityMatch with label='Address' for city candidate 'Berlin'"
+    )
+
+
+def test_city_partial_match_resolves_to_address_node() -> None:
+    """Partial city substring resolves to an Address EntityMatch (label='Address').
+
+    Exercises the reverse CONTAINS branch:
+    toLower($candidate) CONTAINS toLower(n.city) where candidate 'East' is
+    contained within stored city 'East Berlin'.
+
+    Before Bug 13 fix: no Address entry in _LABEL_QUERIES → no Address Cypher
+    runs → result is empty → test fails.
+    After fix: Address Cypher executes, row returned, EntityMatch produced.
+    """
+    session = _session_returning_for_label(
+        ":Address",
+        [{"node_id": "ADDR-002", "name": "East Berlin"}],
+    )
+    results = resolve_entities('"East"', session, top_k=5)
+    assert any(m.label == "Address" for m in results), (
+        "Expected at least one EntityMatch with label='Address' for partial city candidate 'East'"
+    )
