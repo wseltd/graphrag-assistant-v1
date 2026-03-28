@@ -124,10 +124,19 @@ async def run_benchmark_endpoint(
             result = run_graph_rag(query, session, vector_store)
         return {
             "answer": result.answer,
+            "graph_evidence": [],
             "text_citations": [
-                {"chunk_id": c.chunk_id, "excerpt": c.excerpt}
+                {"chunk_id": c.chunk_id, "doc_id": c.doc_id, "quote": c.quote}
                 for c in result.text_citations
             ],
+            "retrieval_debug": {
+                "graph_query": None,
+                "entity_matches": [],
+                "retrieved_node_ids": [],
+                "chunk_ids": [],
+                "timings": {},
+            },
+            "mode": "graph_rag",
         }
 
     result = run_benchmark(queries, answers, _plain_rag_fn, _graph_rag_fn)
