@@ -43,7 +43,14 @@ _EXPECTED_ANSWER_KEYS = {"answer", "graph_evidence", "text_citations", "retrieva
 
 
 def _empty_debug() -> RetrievalDebug:
-    return RetrievalDebug()
+    # Canonical RetrievalDebug has no defaults — all five fields are required.
+    return RetrievalDebug(
+        graph_query=None,
+        entity_matches=[],
+        retrieved_node_ids=[],
+        chunk_ids=[],
+        timings={},
+    )
 
 
 def _populated_debug(cypher: str = "MATCH (n) RETURN n") -> RetrievalDebug:
@@ -152,6 +159,18 @@ def test_answer_schema_plain_rag_all_top_level_fields() -> None:
     dumped = schema.model_dump()
     assert dumped.keys() == _EXPECTED_ANSWER_KEYS
     assert dumped["mode"] == "plain_rag"
+
+
+def test_retrieval_debug_class_is_from_graphrag_assistant_schemas() -> None:
+    import graphrag_assistant.schemas as canonical
+
+    assert RetrievalDebug is canonical.RetrievalDebug
+
+
+def test_answer_schema_class_is_from_graphrag_assistant_schemas() -> None:
+    import graphrag_assistant.schemas as canonical
+
+    assert AnswerSchema is canonical.AnswerSchema
 
 
 def test_answer_schema_graph_rag_all_top_level_fields() -> None:
