@@ -109,7 +109,7 @@ class PlainRagPipeline:
             )
             raw_chunks = [
                 {
-                    "doc_id": row["contract_id"],
+                    "doc_id": row.get("contract_id") or "",
                     "chunk_id": row["chunk_id"],
                     "text": row["text"],
                 }

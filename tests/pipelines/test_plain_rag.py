@@ -320,3 +320,53 @@ def test_answer_schema_imported_from_shared_module() -> None:
     pipeline, _, _, _ = _make_pipeline()
     result = pipeline.execute("query")
     assert isinstance(result, SharedAnswerSchema)
+
+
+# ---------------------------------------------------------------------------
+# contract_id NULL guard (Bug 7)
+# ---------------------------------------------------------------------------
+
+
+def test_plain_rag_does_not_raise_when_contract_id_is_none() -> None:
+    """Key failure mode: Neo4j returns NULL for contract_id as a present key
+    with value None — not an absent key.  The real TemplateGenerationProvider
+    is used so the full Pydantic validation path runs.
+    """
+    from graphrag_assistant.providers.generation_stub import TemplateGenerationProvider
+
+    rows = [{"chunk_id": "CL001_c0", "contract_id": None, "text": "Some text."}]
+    mock_embed = MagicMock()
+    mock_embed.embed.return_value = [[0.1, 0.2, 0.3]]
+    mock_session = MagicMock()
+    mock_session.run.return_value = rows
+    mock_driver = MagicMock()
+    mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+
+    pipeline = PlainRagPipeline(
+        embedding_provider=mock_embed,
+        generation_provider=TemplateGenerationProvider(),
+        driver=mock_driver,
+    )
+    result = pipeline.execute("What is the clause?")
+    assert isinstance(result, AnswerSchema)
+
+
+def test_plain_rag_doc_id_empty_string_when_contract_id_none() -> None:
+    """When Neo4j returns NULL for contract_id (key present, value None),
+    the doc_id in the chunks passed to the generation provider must be "".
+    """
+    rows = [{"chunk_id": "CL001_c0", "contract_id": None, "text": "Some text."}]
+    pipeline, _, mock_gen, _ = _make_pipeline(rows=rows)
+    pipeline.execute("What is the clause?")
+    chunks_passed = mock_gen.generate.call_args.kwargs["chunks"]
+    assert chunks_passed[0]["doc_id"] == ""
+
+
+def test_plain_rag_doc_id_preserved_when_contract_id_non_null() -> None:
+    """When Neo4j returns a real contract_id, doc_id must pass through unchanged."""
+    rows = [{"chunk_id": "CL001_c0", "contract_id": "CT-REAL-001", "text": "Some text."}]
+    pipeline, _, mock_gen, _ = _make_pipeline(rows=rows)
+    pipeline.execute("What is the clause?")
+    chunks_passed = mock_gen.generate.call_args.kwargs["chunks"]
+    assert chunks_passed[0]["doc_id"] == "CT-REAL-001"
