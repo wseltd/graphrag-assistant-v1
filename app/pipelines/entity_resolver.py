@@ -87,6 +87,16 @@ _LABEL_QUERIES: dict[str, str] = {
         "OR toLower($candidate) CONTAINS toLower(n.clause_type) "
         "RETURN n.clause_id AS node_id, 'Clause' AS label, n.clause_id AS name"
     ),
+    # node_id is n.id (stable graph key), NOT n.city — downstream constrained
+    # retrieval looks up anchor nodes by their domain key, not by city string.
+    # Bidirectional CONTAINS handles both short prefixes ("Berl" → "Berlin")
+    # and verbose candidates that subsume the city ("I live in Berlin" → "Berlin").
+    "Address": (
+        "MATCH (n:Address) "
+        "WHERE toLower(n.city) CONTAINS toLower($candidate) "
+        "OR toLower($candidate) CONTAINS toLower(n.city) "
+        "RETURN n.id AS node_id, 'Address' AS label, n.city AS name"
+    ),
 }
 
 

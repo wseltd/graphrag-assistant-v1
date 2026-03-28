@@ -129,3 +129,41 @@ def test_clause_type_keyword_candidate_resolves_to_clause_entity_match() -> None
     clause_match = next((r for r in results if r.node_id == "CL-007"), None)
     assert clause_match is not None, "Expected a match for termination clause keyword"
     assert clause_match.label == "Clause"
+
+
+def test_city_candidate_resolves_to_address_entity_match() -> None:
+    """Exact city name resolves to an Address EntityMatch with label='Address'.
+
+    node_id must be the Address domain key (n.id), not the city string —
+    downstream constrained retrieval uses domain keys for anchor lookup.
+    """
+    # Only the Address query returns a row; all other label queries return empty.
+    session = _session_returning_for_label(
+        ":Address",
+        [{"node_id": "ADDR-001", "name": "Berlin"}],
+    )
+    results = resolve_entities('"Berlin"', session, top_k=5)
+    assert len(results) >= 1
+    address_match = next((r for r in results if r.node_id == "ADDR-001"), None)
+    assert address_match is not None, "Expected a match for city candidate 'Berlin'"
+    assert address_match.label == "Address"
+    assert address_match.score == 1.0  # candidate == name → exact match
+
+
+def test_partial_city_candidate_resolves_to_address_entity_match() -> None:
+    """Short city prefix resolves to an Address EntityMatch via forward CONTAINS.
+
+    Simulates: candidate 'Berl' matches an Address node whose city is 'Berlin'
+    via the forward CONTAINS branch (n.city CONTAINS candidate).
+    Score must be < 1.0 because the candidate is shorter than the stored name.
+    """
+    session = _session_returning_for_label(
+        ":Address",
+        [{"node_id": "ADDR-001", "name": "Berlin"}],
+    )
+    results = resolve_entities('"Berl"', session, top_k=5)
+    assert len(results) >= 1
+    address_match = next((r for r in results if r.node_id == "ADDR-001"), None)
+    assert address_match is not None, "Expected a match for partial city candidate 'Berl'"
+    assert address_match.label == "Address"
+    assert address_match.score < 1.0  # partial CONTAINS → overlap ratio < 1
