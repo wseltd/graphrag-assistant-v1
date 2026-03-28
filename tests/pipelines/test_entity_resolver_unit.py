@@ -131,6 +131,39 @@ def test_clause_type_keyword_candidate_resolves_to_clause_entity_match() -> None
     assert clause_match.label == "Clause"
 
 
+def test_clause_id_exact_match_resolves_to_clause_node() -> None:
+    """A clause_id string resolves to exactly one Clause EntityMatch (label='Clause').
+
+    Before Bug 12 fix: _LABEL_QUERIES has no Clause key → session.run never
+    receives Clause Cypher → result is empty → test fails.
+    After fix: Clause Cypher is executed, row returned, EntityMatch produced.
+    """
+    session = _session_returning_for_label(
+        ":Clause",
+        [{"node_id": "CLAUSE-001", "name": "CLAUSE-001"}],
+    )
+    results = resolve_entities('"CLAUSE-001"', session, top_k=5)
+    assert any(m.label == "Clause" for m in results), (
+        "Expected at least one EntityMatch with label='Clause' for clause_id candidate"
+    )
+
+
+def test_clause_type_contains_match_resolves_to_clause_node() -> None:
+    """A clause_type keyword resolves via CONTAINS to a Clause EntityMatch (label='Clause').
+
+    Before Bug 12 fix: no Clause entry → no match → test fails.
+    After fix: candidate 'payment' hits the CONTAINS branch of the Clause Cypher.
+    """
+    session = _session_returning_for_label(
+        ":Clause",
+        [{"node_id": "CLAUSE-042", "name": "payment"}],
+    )
+    results = resolve_entities('"payment"', session, top_k=5)
+    assert any(m.label == "Clause" for m in results), (
+        "Expected at least one EntityMatch with label='Clause' for clause_type keyword"
+    )
+
+
 def test_city_candidate_resolves_to_address_entity_match() -> None:
     """Exact city name resolves to an Address EntityMatch with label='Address'.
 
