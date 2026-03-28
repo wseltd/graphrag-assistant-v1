@@ -41,11 +41,15 @@ class RankedChunk:
         text:     Raw text of the chunk.
         score:    Cosine similarity score from the vector store (higher = more
                   similar to the query).  Range depends on the underlying model.
+        doc_id:   Document identifier from the vector store result, used to
+                  populate TextCitation.doc_id downstream.  Defaults to "" when
+                  the vector store does not emit this field (e.g. in unit tests).
     """
 
     chunk_id: str
     text: str
     score: float
+    doc_id: str = ""
 
 
 def retrieve_constrained(
@@ -94,6 +98,7 @@ def retrieve_constrained(
             chunk_id=r["chunk_id"],
             text=r["text"],
             score=r["score"],
+            doc_id=r.get("doc_id", ""),
         )
         for r in raw
         if r["chunk_id"] in allowed
