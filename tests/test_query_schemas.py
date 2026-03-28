@@ -29,8 +29,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.query_schemas import AnswerSchema, QueryRequest, RetrievalDebug
-from graphrag_assistant.schemas import GraphFact, TextCitation
+from app.schemas.query_schemas import QueryRequest
+from graphrag_assistant.schemas import AnswerSchema, GraphFact, RetrievalDebug, TextCitation
 
 # ---------------------------------------------------------------------------
 # Helpers
