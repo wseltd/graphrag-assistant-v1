@@ -688,6 +688,57 @@ def test_clause_node_1hop_dst_not_internal_id() -> None:
     assert clause_pos < else_pos, "Clause branch must precede ELSE to avoid numeric fallback"
 
 
+# Tests for Address node dst projection (T004)
+# ---------------------------------------------------------------------------
+# The risk: Address nodes lack a CASE branch in _Q_1HOP and _Q_2HOP dst
+# expressions, so the ELSE toString(id(...)) fallback fires and dst becomes a
+# numeric string like '42' instead of the city display label like 'Berlin'.
+# These tests verify the Cypher constants directly — mock sessions cannot
+# catch a missing branch because they return whatever value you provide.
+
+
+def test_address_node_1hop_dst_returns_city() -> None:
+    """_Q_1HOP dst CASE must have an Address branch returning b.city.
+
+    Without this branch the ELSE fallback fires, returning toString(id(b)) —
+    a numeric string instead of a city name like 'Berlin'.
+    """
+    from app.pipelines.graph_traversal import _Q_1HOP
+
+    assert "WHEN 'Address' IN labels(b) THEN b.city" in _Q_1HOP
+
+
+def test_address_node_2hop_dst_returns_city() -> None:
+    """_Q_2HOP dst CASE must have an Address branch returning endNode(r).city.
+
+    Without this branch, Address nodes in a 2-hop path return a numeric
+    toString(id(endNode(r))) value instead of the city display label.
+    """
+    from app.pipelines.graph_traversal import _Q_2HOP
+
+    assert (
+        "WHEN 'Address' IN labels(endNode(r)) THEN endNode(r).city"
+        in _Q_2HOP
+    )
+
+
+def test_address_node_1hop_dst_not_internal_id() -> None:
+    """The Address branch must appear before the ELSE fallback in _Q_1HOP dst CASE.
+
+    Neo4j internal IDs are integers; toString(id(b)) produces a numeric string
+    like '42'. The Address branch must precede the ELSE so Address nodes return
+    their city property, not a raw integer-like string.
+    """
+    from app.pipelines.graph_traversal import _Q_1HOP
+
+    address_branch = "WHEN 'Address' IN labels(b) THEN b.city"
+    else_fallback = "ELSE toString(id(b))"
+    assert address_branch in _Q_1HOP, "Address branch absent — dst falls back to numeric ID"
+    address_pos = _Q_1HOP.find(address_branch)
+    else_pos = _Q_1HOP.find(else_fallback)
+    assert address_pos < else_pos, "Address branch must precede ELSE to avoid numeric fallback"
+
+
 def test_co_party_directors_deduped_against_director_of_in_traverse() -> None:
     """A triple from both expand_inbound_director_of and expand_co_party_directors appears once.
 
