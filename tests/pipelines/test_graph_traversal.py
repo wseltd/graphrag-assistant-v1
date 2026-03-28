@@ -40,14 +40,15 @@ class TestSingleHopTraversal:
         assert "CL001_c0" in result.chunk_ids
 
     def test_max_hops_one_issues_four_db_calls(self) -> None:
-        """max_hops=1 issues four session.run calls.
+        """max_hops=1 issues five session.run calls.
 
-        Calls: main query, director-of expansion, coparty expansion, coparty-directors expansion.
+        Calls: main query, director-of expansion, coparty expansion,
+        coparty-directors expansion, _collect_anchor_chunks.
         """
         session = MagicMock()
         session.run.return_value = []
         traverse_from_anchors(["C1"], session, max_hops=1)
-        assert session.run.call_count == 4
+        assert session.run.call_count == 5
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,7 @@ class TestDirectorOfInboundExpansion:
         # Call 2: expand_inbound_director_of (one inbound DIRECTOR_OF edge)
         # Call 3: _expand_coparty (no co-parties for this anchor)
         # Call 4: expand_co_party_directors (no co-party directors)
+        # Call 5: _collect_anchor_chunks (no chunks for this anchor)
         session.run.side_effect = [
             [],
             [
@@ -151,6 +153,7 @@ class TestDirectorOfInboundExpansion:
                     "chunk_id": None,
                 }
             ],
+            [],
             [],
             [],
         ]
@@ -187,6 +190,7 @@ class TestDirectorOfInboundExpansion:
             ],
             [],  # _expand_coparty: no co-parties
             [],  # expand_co_party_directors: no co-party directors
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_001"], session)
         director_triples = [
@@ -208,6 +212,7 @@ class TestDirectorOfInboundExpansion:
             [triple_row],  # expansion returns the same one
             [],  # _expand_coparty: no co-parties
             [],  # expand_co_party_directors: no co-party directors
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert result.triples.count(
@@ -265,6 +270,7 @@ class TestCopartyExpansion:
                 }
             ],
             [],   # expand_co_party_directors: no directors of that co-party
+            [],   # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         assert Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001") in result.triples
@@ -280,6 +286,7 @@ class TestCopartyExpansion:
                 {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None},
             ],
             [],  # expand_co_party_directors
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         coparty_triples = [t for t in result.triples if t.src == "Supplier Co"]
@@ -294,6 +301,7 @@ class TestCopartyExpansion:
             [],            # expand_inbound_director_of
             [shared_row],  # _expand_coparty returns the same triple
             [],            # expand_co_party_directors
+            [],            # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         assert result.triples.count(Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001")) == 1
@@ -402,6 +410,7 @@ class TestCoPartyDirectorsExpansion:
                     "chunk_id": None,
                 }
             ],
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["ANCHOR_001"], session, max_hops=1)
         assert Triple(src="Carol White", rel="DIRECTOR_OF", dst="Gamma Ltd") in result.triples
@@ -428,6 +437,7 @@ class TestNamedEntityTriples:
             [],  # expand_inbound_director_of
             [],  # _expand_coparty
             [],  # expand_co_party_directors
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert len(result.triples) == 1
@@ -458,6 +468,7 @@ class TestNamedEntityTriples:
             [],  # expand_inbound_director_of
             [],  # _expand_coparty
             [],  # expand_co_party_directors
+            [],  # _collect_anchor_chunks: no chunks
         ]
         result = traverse_from_anchors(["COMP_BETA"], session, max_hops=1)
         srcs = {t.src for t in result.triples}
@@ -760,8 +771,70 @@ def test_co_party_directors_deduped_against_director_of_in_traverse() -> None:
         [shared_row],   # expand_inbound_director_of
         [],             # _expand_coparty
         [shared_row],   # expand_co_party_directors returns the same triple
+        [],             # _collect_anchor_chunks: no chunks
     ]
     result = traverse_from_anchors(["ANCHOR_001"], session, max_hops=1)
     assert result.triples.count(
         Triple(src="Shared Director", rel="DIRECTOR_OF", dst="Overlap Corp")
     ) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests for _collect_anchor_chunks (T015)
+# ---------------------------------------------------------------------------
+# The risk: if the 5th session.run call is silently dropped, chunk_ids is always
+# empty regardless of what the graph contains.  These tests verify the observable
+# output (GraphTraversalResult.chunk_ids) when the 5th call returns chunk rows.
+#
+# Side-effect ordering is the hard part: all three tests that use non-empty
+# node_ids need exactly 5 entries.  Fewer causes StopIteration on the 5th call.
+
+
+def test_chunk_ids_non_empty_when_chunk_query_returns_rows() -> None:
+    """5th session.run returns one chunk row → chunk_ids contains that chunk_id.
+
+    The first four calls return empty lists so that any chunk_ids in the result
+    can only come from _collect_anchor_chunks (the 5th call).  If the 5th call
+    is ever dropped, chunk_ids stays empty and this test fails.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        [],   # main hop query: no outbound edges
+        [],   # expand_inbound_director_of: no directors
+        [],   # expand_co_party_chain: no co-parties
+        [],   # expand_co_party_directors: no co-party directors
+        [{"chunk_id": "CL001_c0"}],  # _collect_anchor_chunks: one chunk
+    ]
+    result = traverse_from_anchors(["CONTRACT_001"], session)
+    assert result.chunk_ids == ["CL001_c0"]
+
+
+def test_chunk_ids_empty_when_node_ids_is_empty() -> None:
+    """Empty node_ids triggers the early-return path — no DB calls, chunk_ids empty."""
+    session = MagicMock()
+    result = traverse_from_anchors([], session)
+    assert result.chunk_ids == []
+    session.run.assert_not_called()
+
+
+def test_multi_anchor_chunk_ids_all_collected() -> None:
+    """5th call returns two chunk rows from different anchors → both appear, no duplicates.
+
+    Also verifies deduplication: if both rows carry the same chunk_id it must
+    appear exactly once.  Two distinct IDs must both be present.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        [],   # main hop query: no outbound edges
+        [],   # expand_inbound_director_of: no directors
+        [],   # expand_co_party_chain: no co-parties
+        [],   # expand_co_party_directors: no co-party directors
+        [     # _collect_anchor_chunks: two chunks from two different anchors
+            {"chunk_id": "CL001_c0"},
+            {"chunk_id": "CL002_c0"},
+        ],
+    ]
+    result = traverse_from_anchors(["CONTRACT_001", "CONTRACT_002"], session)
+    assert "CL001_c0" in result.chunk_ids
+    assert "CL002_c0" in result.chunk_ids
+    assert len(result.chunk_ids) == 2  # no duplicates

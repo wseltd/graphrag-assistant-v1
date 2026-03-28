@@ -192,6 +192,18 @@ _Q_COPARTY_DIRECTORS: str = (
     "RETURN p.name AS src, 'DIRECTOR_OF' AS rel, co.name AS dst, null AS chunk_id"
 )
 
+# Anchor-chunk reverse lookup: all Chunk relationships point TO anchors, not
+# FROM them — (Chunk)-[:FROM_CONTRACT|ABOUT_COMPANY|RELATED_TO]->(anchor).
+# The outbound traversal above never reaches Chunk nodes because no outbound
+# edge from an anchor leads to a Chunk.  This query walks the inbound direction
+# to collect all Chunk nodes that reference any of the anchor nodes.
+_Q_CHUNKS: str = (
+    "UNWIND $node_ids AS nid "
+    "MATCH (anchor) WHERE anchor.id = nid OR anchor.contract_id = nid "
+    "MATCH (ch:Chunk)-[:FROM_CONTRACT|ABOUT_COMPANY|RELATED_TO]->(anchor) "
+    "RETURN ch.chunk_id AS chunk_id"
+)
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -274,6 +286,31 @@ def expand_co_party_directors(
     return _rows_to_triples(session.run(_Q_COPARTY_DIRECTORS, {"node_ids": node_ids}))
 
 
+def _collect_anchor_chunks(node_ids: list[str], session: Any) -> list[str]:
+    """Return deduplicated chunk_ids for all Chunk nodes pointing to the anchors.
+
+    Chunk edges are directed toward anchors, not away from them, so the main
+    outbound traversal never reaches Chunk nodes.  This helper runs the inbound
+    reverse lookup to collect them.
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        Ordered, deduplicated list of chunk_id strings.  Empty list when no
+        Chunk nodes reference any of the anchors.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for row in session.run(_Q_CHUNKS, {"node_ids": node_ids}):
+        cid = row["chunk_id"]
+        if cid is not None and cid not in seen:
+            seen.add(cid)
+            result.append(cid)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -291,10 +328,13 @@ def traverse_from_anchors(
     a Triple for every relationship edge traversed.  Both result lists are
     deduplicated before return.
 
-    Also performs three supplemental expansions:
+    Also performs four supplemental expansions:
       - Inbound DIRECTOR_OF: directors of Company anchors (edge points toward anchor).
       - Co-party PARTY_TO: companies sharing a Contract with Company anchors.
       - Co-party DIRECTOR_OF: directors of those co-party companies.
+      - Anchor chunks: Chunk nodes whose inbound edges point to the anchors
+        (collected via _collect_anchor_chunks because Chunk edges are directed
+        toward anchors, not away from them).
 
     Args:
         node_ids:  Domain-level identifiers (Company.id or
@@ -346,6 +386,11 @@ def traverse_from_anchors(
         if triple not in seen_triples:
             seen_triples.add(triple)
             triples.append(triple)
+
+    for cid in _collect_anchor_chunks(node_ids, session):
+        if cid not in seen_chunk_ids:
+            seen_chunk_ids.add(cid)
+            chunk_ids.append(cid)
 
     logger.info(
         "traverse_from_anchors: anchors=%d hops=%d triples=%d chunks=%d",
