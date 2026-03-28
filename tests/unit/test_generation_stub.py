@@ -5,6 +5,7 @@ import pytest
 
 from graphrag_assistant.providers.base import GenerationProvider
 from graphrag_assistant.providers.generation_stub import (
+    _GRAPH_QUERY_STUB,
     TemplateGenerationProvider,
 )
 from graphrag_assistant.schemas import AnswerSchema
@@ -135,3 +136,29 @@ def test_citation_quote_truncated_at_120_chars(
 
 def test_isinstance_check(provider: TemplateGenerationProvider) -> None:
     assert isinstance(provider, GenerationProvider)
+
+
+def test_retrieval_debug_graph_query_is_plain_string_not_list_repr(
+    provider: TemplateGenerationProvider,
+) -> None:
+    result = provider.generate(
+        "[mode:graph_rag] Query",
+        graph_facts=[_FACT],
+        chunks=[],
+    )
+    gq = result.retrieval_debug.graph_query
+    assert isinstance(gq, str)
+    # A Python list repr starts with '['; reject it explicitly.
+    assert not gq.startswith("["), f"graph_query looks like a list repr: {gq!r}"
+
+
+def test_retrieval_debug_graph_query_equals_graph_traversal_constant(
+    provider: TemplateGenerationProvider,
+) -> None:
+    result = provider.generate(
+        "[mode:graph_rag] Query",
+        graph_facts=[_FACT],
+        chunks=[_CHUNK],
+    )
+    assert result.retrieval_debug.graph_query == _GRAPH_QUERY_STUB
+    assert result.retrieval_debug.graph_query == "GRAPH_TRAVERSAL"
