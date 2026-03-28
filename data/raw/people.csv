@@ -1,0 +1,16 @@
+person_id,full_name,title,nationality,job_title,company_id,address_id,email
+P001,James Blackwood,Mr,British,Chief Procurement Officer,C001,A001,j.blackwood@meridianholdings.co.uk
+P002,Sarah Chen,Mrs,British,Head of Contracts,C002,A002,s.chen@nexusprocurement.co.uk
+P003,Heinrich Müller,Dr,German,Managing Director,C004,A004,h.muller@albrechtpartner.de
+P004,Oliver Hartley,Mr,British,Senior Consultant,C003,A003,o.hartley@hartwellsolutions.co.uk
+P005,Claire Fontaine,Mrs,French,Director of Operations,C005,A005,c.fontaine@centrologic.fr
+P006,Rajesh Patel,Mr,British,Technical Director,C006,A006,r.patel@vantagesystems.co.uk
+P007,Emma Thornton,Dr,British,Principal Consultant,C009,A009,e.thornton@thornbridgeconsulting.co.uk
+P008,Lucas Vandermeer,Mr,Dutch,Head of Technology,C008,A008,l.vandermeer@redstonetech.nl
+P009,Patricia Walsh,Mrs,Irish,Chief Executive Officer,C014,A014,p.walsh@deltaformtech.ie
+P010,Antoine Dubois,Prof,French,Chief Commercial Officer,C010,A010,a.dubois@eurocomtrading.be
+P011,Daniel Fairfax,Mr,British,Supply Chain Manager,C013,A013,d.fairfax@fairfaxsupplies.co.uk
+P012,Ingrid Svensson,Mrs,Swedish,Product Manager,C011,A011,i.svensson@stackfielddigital.de
+P013,Thomas Redstone,Mr,British,Infrastructure Lead,C008,A015,t.redstone@redstonetech.nl
+P014,Katarina Bauer,Dr,German,Legal Counsel,C004,A011,k.bauer@albrechtpartner.de
+P015,William Clearwater,Mr,British,Finance Director,C012,A012,w.clearwater@clearwaterinfra.co.uk

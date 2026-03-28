@@ -1,0 +1,16 @@
+company_id,name,type,registration_number,country,registered_address_id,registered_since
+C001,Meridian Holdings,Ltd,12847391,UK,A001,2015-03-12
+C002,Nexus Procurement,PLC,09234156,UK,A002,2010-07-08
+C003,Hartwell Solutions,Ltd,11502847,UK,A003,2012-11-22
+C004,Albrecht und Partner,GmbH,30482719,Germany,A004,2008-04-03
+C005,CentroLogic Industrie,SA,75018324,France,A005,2009-09-15
+C006,Vantage Systems,Ltd,08163924,UK,A006,2011-06-30
+C007,Pinnacle Contracts,PLC,07591483,UK,A007,2013-02-17
+C008,Redstone Technologies,LLC,84720193,Netherlands,A008,2016-08-25
+C009,Thornbridge Consulting,Ltd,13047285,UK,A009,2018-05-11
+C010,Eurocom Trading,SA,50293847,Belgium,A010,2007-12-01
+C011,Stackfield Digital,GmbH,29183740,Germany,A011,2017-10-09
+C012,Clearwater Infrastructure,PLC,06482917,UK,A012,2014-03-28
+C013,Fairfax Supplies,Ltd,10293847,UK,A013,2019-01-14
+C014,Deltaform Technologies,LLC,34819205,Ireland,A014,2011-09-07
+C015,Solaris Industrial,Ltd,14728301,UK,A015,2016-04-21

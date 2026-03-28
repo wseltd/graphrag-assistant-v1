@@ -1,0 +1,21 @@
+person_id,company_id,role,appointed_date,is_active
+P001,C001,Chief Procurement Officer,2018-03-15,true
+P001,C007,Non-Executive Director,2020-06-01,false
+P002,C002,Head of Contracts,2019-01-10,true
+P003,C004,Managing Director,2015-04-20,true
+P003,C011,Supervisory Board Member,2021-09-15,true
+P004,C003,Senior Consultant,2017-07-30,true
+P005,C005,Director of Operations,2016-11-01,true
+P005,C015,Operations Advisor,2022-07-18,false
+P006,C006,Technical Director,2020-02-14,true
+P007,C009,Principal Consultant,2018-08-21,true
+P007,C012,Advisory Board Member,2022-03-10,true
+P008,C008,Head of Technology,2019-05-06,true
+P009,C014,Chief Executive Officer,2013-12-01,true
+P010,C010,Chief Commercial Officer,2017-03-22,true
+P010,C013,Advisory Board Member,2022-01-05,false
+P011,C013,Supply Chain Manager,2020-09-30,true
+P012,C011,Product Manager,2021-07-19,true
+P013,C008,Infrastructure Lead,2018-10-03,true
+P014,C004,Legal Counsel,2016-05-25,true
+P015,C012,Finance Director,2019-11-14,true

@@ -1,0 +1,7 @@
+contract_id,title,effective_date,expiry_date,status,value_usd,party_ids
+K001,Software Licence Agreement,2025-04-01,2030-03-31,Active,85000.00,C001|C002
+K002,Cloud Migration Consultancy Agreement,2025-05-15,2025-12-31,Active,100000.00,C001|C003
+K003,Hardware Supply Agreement,2025-06-01,2027-05-31,Active,175600.00,C001|C004
+K004,Managed IT Services Agreement,2025-07-01,2027-06-30,Active,61200.00,C001|C005
+K005,Infrastructure Monitoring and Licence Assurance Agreement,2025-08-01,2030-07-31,Active,31500.00,C009|C006
+K006,Disaster Recovery Planning Agreement,2025-09-01,2026-02-28,Active,28000.00,C012|C007

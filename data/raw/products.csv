@@ -1,0 +1,16 @@
+product_id,name,category,unit,unit_price_gbp,supplier_company_id
+PR001,Enterprise Resource Planning Suite,Software Licenses,licence,85000.00,C002
+PR002,Network Security Appliance,Hardware,unit,12500.00,C004
+PR003,Cloud Migration Consultancy,Professional Services,day,1250.00,C003
+PR004,Annual Maintenance & Support Contract,Maintenance & Support,contract,18000.00,C005
+PR005,Data Analytics Platform,Software Licenses,licence,45000.00,C002
+PR006,Server Rack Unit 42U,Hardware,unit,3200.00,C004
+PR007,Procurement Process Review,Professional Services,day,1750.00,C003
+PR008,Infrastructure Monitoring Suite,Software Licenses,licence,22000.00,C006
+PR009,Managed IT Services Package,Maintenance & Support,month,3600.00,C005
+PR010,Industrial Grade Router,Hardware,unit,1850.00,C004
+PR011,Contract Management System,Software Licenses,licence,55000.00,C002
+PR012,Compliance Audit Service,Professional Services,day,2200.00,C003
+PR013,Disaster Recovery Planning,Professional Services,engagement,28000.00,C007
+PR014,UPS Power Module 10kVA,Hardware,unit,4750.00,C004
+PR015,Software Licence Assurance Programme,Maintenance & Support,year,9500.00,C006

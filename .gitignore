@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+*.log
+.env
+
+# Saturnday governance working files — never push to GitHub
+CLAUDE.md
+plan.json
+saturnday-state.json
+saturnday-progress.log
+.saturnday/
+.saturnday-repair-*/

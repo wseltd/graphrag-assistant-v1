@@ -1,0 +1,16 @@
+address_id,street,city,postcode,country
+A001,45 King Street,London,EC2V 8RF,UK
+A002,12 Victoria Road,Manchester,M1 2WN,UK
+A003,78 High Street,Birmingham,B1 1BB,UK
+A004,Unter den Linden 47,Berlin,10117,Germany
+A005,15 Rue de la Paix,Paris,75001,France
+A006,23 Commerce Street,Edinburgh,EH1 1YZ,UK
+A007,5 Tower Place,London,EC3R 5AJ,UK
+A008,Keizersgracht 432,Amsterdam,1016 GC,Netherlands
+A009,89 Broad Street,Bristol,BS1 2EP,UK
+A010,Avenue Louise 367,Brussels,1050,Belgium
+A011,Maximilianstrasse 20,Munich,80539,Germany
+A012,34 Canary Wharf,London,E14 5AB,UK
+A013,67 Waterloo Road,Leeds,LS1 4QP,UK
+A014,Grand Canal Square 1,Dublin,D02 P820,Ireland
+A015,101 The Strand,London,WC2R 0RL,UK
