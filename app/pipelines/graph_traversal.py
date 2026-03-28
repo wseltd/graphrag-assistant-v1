@@ -171,6 +171,23 @@ _Q_COPARTY: str = (
     "RETURN co.name AS src, 'PARTY_TO' AS rel, c.contract_id AS dst, null AS chunk_id"
 )
 
+# Co-party directors expansion: finds Person nodes that are directors of Company
+# nodes that share a Contract with an anchor Company.  The outbound hop queries
+# miss these because the DIRECTOR_OF edge points (Person)->(Company), and the
+# expand_inbound_director_of query only checks directors of the anchor itself —
+# not of companies the anchor trades with.  WHERE co <> anchor prevents the
+# anchor's own directors from being double-counted (those are already covered by
+# expand_inbound_director_of).  Column aliases match expand_inbound_director_of
+# exactly (src, rel, dst, chunk_id) so the result can be merged uniformly.
+_Q_COPARTY_DIRECTORS: str = (
+    "UNWIND $node_ids AS nid "
+    "MATCH (anchor:Company) WHERE anchor.id = nid "
+    "MATCH (co:Company)-[:PARTY_TO]->(c:Contract)<-[:PARTY_TO]-(anchor) "
+    "WHERE co <> anchor "
+    "MATCH (p:Person)-[:DIRECTOR_OF]->(co) "
+    "RETURN p.name AS src, 'DIRECTOR_OF' AS rel, co.name AS dst, null AS chunk_id"
+)
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -238,6 +255,41 @@ def expand_co_party_chain(
     return _expand_coparty(node_ids, session)
 
 
+def expand_co_party_directors(
+    node_ids: list[str],
+    session: Any,
+) -> list[Triple]:
+    """Return deduplicated DIRECTOR_OF triples for directors of co-party Companies.
+
+    Closes the gap left by expand_inbound_director_of, which only surfaces
+    directors of anchor companies.  This query follows the two-hop chain
+    (anchor)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(co) and then finds
+    (p:Person)-[:DIRECTOR_OF]->(co), returning the person-company relationship.
+
+    Column aliases returned by _Q_COPARTY_DIRECTORS:
+        src       — p.name  (director person name)
+        rel       — 'DIRECTOR_OF' (literal string)
+        dst       — co.name (co-party company name)
+        chunk_id  — null (Person nodes are not Chunks)
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        List of unique Triple instances with rel='DIRECTOR_OF'.
+    """
+    rows = session.run(_Q_COPARTY_DIRECTORS, {"node_ids": node_ids})
+    seen: set[Triple] = set()
+    triples: list[Triple] = []
+    for row in rows:
+        triple = Triple(src=row["src"], rel=row["rel"], dst=row["dst"])
+        if triple not in seen:
+            seen.add(triple)
+            triples.append(triple)
+    return triples
+
+
 def _expand_coparty(
     node_ids: list[str],
     session: Any,
@@ -287,9 +339,10 @@ def traverse_from_anchors(
     a Triple for every relationship edge traversed.  Both result lists are
     deduplicated before return.
 
-    Also performs two supplemental expansions:
+    Also performs three supplemental expansions:
       - Inbound DIRECTOR_OF: directors of Company anchors (edge points toward anchor).
       - Co-party PARTY_TO: companies sharing a Contract with Company anchors.
+      - Co-party DIRECTOR_OF: directors of those co-party companies.
 
     Args:
         node_ids:  Domain-level identifiers (Company.id or
@@ -333,6 +386,11 @@ def traverse_from_anchors(
             triples.append(triple)
 
     for triple in _expand_coparty(node_ids, session):
+        if triple not in seen_triples:
+            seen_triples.add(triple)
+            triples.append(triple)
+
+    for triple in expand_co_party_directors(node_ids, session):
         if triple not in seen_triples:
             seen_triples.add(triple)
             triples.append(triple)

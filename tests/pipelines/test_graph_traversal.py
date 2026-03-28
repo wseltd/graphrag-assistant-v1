@@ -18,6 +18,7 @@ from app.pipelines.graph_traversal import (
     _expand_coparty,
     _expand_director_of,
     expand_co_party_chain,
+    expand_co_party_directors,
     expand_inbound_director_of,
     traverse_from_anchors,
 )
@@ -41,11 +42,14 @@ class TestSingleHopTraversal:
         assert "CL001_c0" in result.chunk_ids
 
     def test_max_hops_one_issues_three_db_calls(self) -> None:
-        """max_hops=1 issues exactly three session.run calls: main query + director-of + coparty."""
+        """max_hops=1 issues four session.run calls.
+
+        Calls: main query, director-of expansion, coparty expansion, coparty-directors expansion.
+        """
         session = MagicMock()
         session.run.return_value = []
         traverse_from_anchors(["C1"], session, max_hops=1)
-        assert session.run.call_count == 3
+        assert session.run.call_count == 4
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +139,10 @@ class TestDirectorOfInboundExpansion:
         query never sees it.  _expand_director_of must surface it.
         """
         session = MagicMock()
-        # First call: main hop query (no outbound edges from this anchor)
-        # Second call: _expand_director_of (one inbound DIRECTOR_OF edge)
-        # Third call: _expand_coparty (no co-parties for this anchor)
+        # Call 1: main hop query (no outbound edges from this anchor)
+        # Call 2: expand_inbound_director_of (one inbound DIRECTOR_OF edge)
+        # Call 3: _expand_coparty (no co-parties for this anchor)
+        # Call 4: expand_co_party_directors (no co-party directors)
         session.run.side_effect = [
             [],
             [
@@ -148,6 +153,7 @@ class TestDirectorOfInboundExpansion:
                     "chunk_id": None,
                 }
             ],
+            [],
             [],
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
@@ -182,6 +188,7 @@ class TestDirectorOfInboundExpansion:
                 },
             ],
             [],  # _expand_coparty: no co-parties
+            [],  # expand_co_party_directors: no co-party directors
         ]
         result = traverse_from_anchors(["COMP_001"], session)
         director_triples = [
@@ -202,6 +209,7 @@ class TestDirectorOfInboundExpansion:
             [triple_row],  # main query also returned this triple
             [triple_row],  # expansion returns the same one
             [],  # _expand_coparty: no co-parties
+            [],  # expand_co_party_directors: no co-party directors
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert result.triples.count(
@@ -249,7 +257,7 @@ class TestCopartyExpansion:
         session = MagicMock()
         session.run.side_effect = [
             [],   # main hop query: no outbound edges from anchor
-            [],   # _expand_director_of: anchor has no directors
+            [],   # expand_inbound_director_of: anchor has no directors
             [     # _expand_coparty: one co-party found
                 {
                     "src": "Supplier Co",
@@ -258,6 +266,7 @@ class TestCopartyExpansion:
                     "chunk_id": None,
                 }
             ],
+            [],   # expand_co_party_directors: no directors of that co-party
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         assert Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001") in result.triples
@@ -267,11 +276,12 @@ class TestCopartyExpansion:
         session = MagicMock()
         session.run.side_effect = [
             [],  # main hop query
-            [],  # _expand_director_of
+            [],  # expand_inbound_director_of
             [    # _expand_coparty: duplicate rows from multi-path Cypher expansion
                 {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None},
                 {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None},
             ],
+            [],  # expand_co_party_directors
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         coparty_triples = [t for t in result.triples if t.src == "Supplier Co"]
@@ -283,8 +293,9 @@ class TestCopartyExpansion:
         session = MagicMock()
         session.run.side_effect = [
             [shared_row],  # main hop query also returned the co-party edge
-            [],            # _expand_director_of
+            [],            # expand_inbound_director_of
             [shared_row],  # _expand_coparty returns the same triple
+            [],            # expand_co_party_directors
         ]
         result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
         assert result.triples.count(Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001")) == 1
@@ -328,8 +339,9 @@ class TestNamedEntityTriples:
         # main query returns one named-entity row; expansions return nothing
         session.run.side_effect = [
             [{"src": "Acme Corp", "rel": "PARTY_TO", "dst": "CONTRACT-001", "chunk_id": None}],
-            [],  # _expand_director_of
+            [],  # expand_inbound_director_of
             [],  # _expand_coparty
+            [],  # expand_co_party_directors
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert len(result.triples) == 1
@@ -357,8 +369,9 @@ class TestNamedEntityTriples:
                 # Person src → Company dst (verifies Person name in src too)
                 {"src": "Jane Smith", "rel": "DIRECTOR_OF", "dst": "Beta Ltd", "chunk_id": None},
             ],
-            [],  # _expand_director_of
+            [],  # expand_inbound_director_of
             [],  # _expand_coparty
+            [],  # expand_co_party_directors
         ]
         result = traverse_from_anchors(["COMP_BETA"], session, max_hops=1)
         srcs = {t.src for t in result.triples}
@@ -484,4 +497,58 @@ def test_broken_co_party_chain_returns_empty_list() -> None:
     session = MagicMock()
     session.run.return_value = []
     result = expand_co_party_chain(["COMP_NO_CONTRACTS"], session)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for expand_co_party_directors (T001)
+# ---------------------------------------------------------------------------
+# The hard part: _Q_COPARTY_DIRECTORS returns column aliases src (p.name),
+# rel (literal 'DIRECTOR_OF'), dst (co.name), chunk_id (null).  A mismatch
+# between mock row keys and RETURN aliases would cause a silent KeyError at
+# runtime.  Both the resolved-director and empty-graph cases are tested here.
+
+
+def test_co_party_directors_resolves_to_named_triple() -> None:
+    """expand_co_party_directors returns one Triple with person name and company name.
+
+    Row keys must exactly match _Q_COPARTY_DIRECTORS RETURN aliases:
+        src       → p.name    (director's person name)
+        rel       → 'DIRECTOR_OF' (literal)
+        dst       → co.name   (co-party company name)
+        chunk_id  → null
+
+    Triple.src and Triple.dst must be the projected name strings, not Neo4j
+    internal element IDs.
+    """
+    session = MagicMock()
+    session.run.return_value = [
+        {
+            "src": "Bob Smith",
+            "rel": "DIRECTOR_OF",
+            "dst": "Supplier Co",
+            "chunk_id": None,
+        }
+    ]
+    result = expand_co_party_directors(["COMP_ANCHOR"], session)
+
+    assert len(result) == 1
+    triple = result[0]
+    assert isinstance(triple, Triple)
+    assert triple.src == "Bob Smith", "src must be the director's name, not an internal ID"
+    assert triple.rel == "DIRECTOR_OF"
+    assert triple.dst == "Supplier Co", "dst must be the co-party company name"
+    assert not triple.src.startswith("toString(")
+    assert not triple.dst.startswith("toString(")
+
+
+def test_co_party_directors_no_directors_returns_empty_list() -> None:
+    """expand_co_party_directors returns [] when no Person directs any co-party Company.
+
+    Simulates an anchor whose co-party companies have no directors registered.
+    The function must return an empty list, not raise or return None.
+    """
+    session = MagicMock()
+    session.run.return_value = []
+    result = expand_co_party_directors(["COMP_NO_COPARTY_DIRECTORS"], session)
     assert result == []
