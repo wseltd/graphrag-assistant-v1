@@ -218,9 +218,8 @@ def test_run_benchmark_file_loadable_and_contains_all_query_results(
     answers = _make_answers(5)
     result = run_benchmark(queries, answers, _stub_fn(), _stub_fn())
     run_id = result["run_id"]
-    loaded = json.loads(
-        (tmp_path / "data" / "benchmark_results" / f"benchmark-{run_id}.json").read_text(encoding="utf-8")
-    )
+    result_path = tmp_path / "data" / "benchmark_results" / f"benchmark-{run_id}.json"
+    loaded = json.loads(result_path.read_text(encoding="utf-8"))
     assert loaded["run_id"] == run_id
     assert len(loaded["query_results"]) == 5
     assert all("query_id" in e for e in loaded["query_results"])
