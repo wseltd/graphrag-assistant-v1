@@ -636,6 +636,58 @@ def test_co_party_directors_no_directors_returns_empty_list() -> None:
     assert result == []
 
 
+# ---------------------------------------------------------------------------
+# Tests for Clause node dst projection (T003)
+# ---------------------------------------------------------------------------
+# The risk: Clause nodes lack a CASE branch in _Q_1HOP and _Q_2HOP dst
+# expressions, so the ELSE toString(id(...)) fallback fires and dst becomes a
+# numeric string like '42' instead of a domain identifier like 'CL-007'.
+# These tests verify the Cypher constants directly — mock sessions cannot
+# catch a missing branch because they return whatever value you provide.
+
+
+def test_clause_node_1hop_dst_returns_clause_id() -> None:
+    """_Q_1HOP dst CASE must have a Clause branch returning b.clause_id.
+
+    Without this branch the ELSE fallback fires, returning toString(id(b)) —
+    a numeric string instead of a clause identifier like 'CL-007'.
+    """
+    from app.pipelines.graph_traversal import _Q_1HOP
+
+    assert "WHEN 'Clause' IN labels(b) THEN b.clause_id" in _Q_1HOP
+
+
+def test_clause_node_2hop_dst_returns_clause_id() -> None:
+    """_Q_2HOP dst CASE must have a Clause branch returning endNode(r).clause_id.
+
+    Without this branch, Clause nodes in a 2-hop path return a numeric
+    toString(id(endNode(r))) value instead of the clause_id domain key.
+    """
+    from app.pipelines.graph_traversal import _Q_2HOP
+
+    assert (
+        "WHEN 'Clause' IN labels(endNode(r)) THEN endNode(r).clause_id"
+        in _Q_2HOP
+    )
+
+
+def test_clause_node_1hop_dst_not_internal_id() -> None:
+    """The Clause branch must appear before the ELSE fallback in _Q_1HOP dst CASE.
+
+    Neo4j internal IDs are integers; toString(id(b)) produces a numeric string
+    like '42'. The Clause branch must precede the ELSE so Clause nodes return
+    their clause_id property, not a raw integer-like string.
+    """
+    from app.pipelines.graph_traversal import _Q_1HOP
+
+    clause_branch = "WHEN 'Clause' IN labels(b) THEN b.clause_id"
+    else_fallback = "ELSE toString(id(b))"
+    assert clause_branch in _Q_1HOP, "Clause branch absent — dst falls back to numeric ID"
+    clause_pos = _Q_1HOP.find(clause_branch)
+    else_pos = _Q_1HOP.find(else_fallback)
+    assert clause_pos < else_pos, "Clause branch must precede ELSE to avoid numeric fallback"
+
+
 def test_co_party_directors_deduped_against_director_of_in_traverse() -> None:
     """A triple from both expand_inbound_director_of and expand_co_party_directors appears once.
 
