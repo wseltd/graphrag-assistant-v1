@@ -15,8 +15,6 @@ from unittest.mock import MagicMock
 from app.pipelines.graph_traversal import (
     GraphTraversalResult,
     Triple,
-    _expand_coparty,
-    _expand_director_of,
     expand_co_party_chain,
     expand_co_party_directors,
     expand_inbound_director_of,
@@ -217,14 +215,14 @@ class TestDirectorOfInboundExpansion:
         ) == 1
 
     def test_expand_director_of_returns_empty_for_no_rows(self) -> None:
-        """_expand_director_of returns an empty list when session yields no rows."""
+        """expand_inbound_director_of returns an empty list when session yields no rows."""
         session = MagicMock()
         session.run.return_value = []
-        result = _expand_director_of(["COMP_001"], session)
+        result = expand_inbound_director_of(["COMP_001"], session)
         assert result == []
 
     def test_expand_director_of_returns_triple_list(self) -> None:
-        """_expand_director_of returns a list of Triple instances."""
+        """expand_inbound_director_of returns a list of Triple instances."""
         session = MagicMock()
         session.run.return_value = [
             {
@@ -234,7 +232,7 @@ class TestDirectorOfInboundExpansion:
                 "chunk_id": None,
             }
         ]
-        result = _expand_director_of(["COMP_002"], session)
+        result = expand_inbound_director_of(["COMP_002"], session)
         assert len(result) == 1
         assert isinstance(result[0], Triple)
         assert result[0].rel == "DIRECTOR_OF"
@@ -301,19 +299,19 @@ class TestCopartyExpansion:
         assert result.triples.count(Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001")) == 1
 
     def test_expand_coparty_returns_empty_for_no_rows(self) -> None:
-        """_expand_coparty returns an empty list when session yields no rows."""
+        """expand_co_party_chain returns an empty list when session yields no rows."""
         session = MagicMock()
         session.run.return_value = []
-        result = _expand_coparty(["COMP_001"], session)
+        result = expand_co_party_chain(["COMP_001"], session)
         assert result == []
 
     def test_expand_coparty_returns_triple_list(self) -> None:
-        """_expand_coparty returns a list of Triple instances with rel PARTY_TO."""
+        """expand_co_party_chain returns a list of Triple instances with rel PARTY_TO."""
         session = MagicMock()
         session.run.return_value = [
             {"src": "Gamma Ltd", "rel": "PARTY_TO", "dst": "CTR-999", "chunk_id": None}
         ]
-        result = _expand_coparty(["COMP_003"], session)
+        result = expand_co_party_chain(["COMP_003"], session)
         assert len(result) == 1
         assert isinstance(result[0], Triple)
         assert result[0].rel == "PARTY_TO"
@@ -631,26 +629,10 @@ def test_co_party_directors_resolves_to_named_triple() -> None:
 
 
 def test_co_party_directors_no_directors_returns_empty_list() -> None:
-    """expand_co_party_directors returns [] when no Person directs any co-party Company.
-
-    Simulates an anchor whose co-party companies have no directors registered.
-    The function must return an empty list, not raise or return None.
-    """
+    """expand_co_party_directors returns [] when no Person directs any co-party Company."""
     session = MagicMock()
     session.run.return_value = []
     result = expand_co_party_directors(["COMP_NO_COPARTY_DIRECTORS"], session)
-    assert result == []
-
-
-def test_co_party_directors_empty_result_returns_empty_list() -> None:
-    """expand_co_party_directors returns [] when the session yields no rows.
-
-    Guards the empty-graph boundary: no co-parties, no directors, or anchor not
-    a Company — all produce zero rows.  The function must return [], not raise.
-    """
-    session = MagicMock()
-    session.run.return_value = []
-    result = expand_co_party_directors(["COMP_EMPTY"], session)
     assert result == []
 
 

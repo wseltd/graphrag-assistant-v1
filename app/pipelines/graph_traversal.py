@@ -194,27 +194,9 @@ _Q_COPARTY_DIRECTORS: str = (
 # ---------------------------------------------------------------------------
 
 
-def expand_inbound_director_of(
-    node_ids: list[str],
-    session: Any,
-) -> list[Triple]:
-    """Return deduplicated DIRECTOR_OF triples for Company anchors.
-
-    Runs an inbound DIRECTOR_OF lookup so that when a Company is the anchor,
-    its directors (Person nodes) are surfaced.  Non-Company anchors are
-    filtered inside Cypher via the :Company label — no Python filtering needed.
-
-    Column aliases returned by _Q_DIRECTOR_OF: src (p.name), rel, dst (anchor.name),
-    chunk_id (always null — directors are not Chunks).
-
-    Args:
-        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
-        session:  Open Neo4j session.
-
-    Returns:
-        List of unique Triple instances with rel='DIRECTOR_OF'.
-    """
-    rows = session.run(_Q_DIRECTOR_OF, {"node_ids": node_ids})
+def _rows_to_triples(rows: Any) -> list[Triple]:
+    # Deduplicate while preserving first-seen order (set gives O(1) membership,
+    # list preserves deterministic output order for downstream citation ranking).
     seen: set[Triple] = set()
     triples: list[Triple] = []
     for row in rows:
@@ -225,8 +207,24 @@ def expand_inbound_director_of(
     return triples
 
 
-# Private alias kept so existing test imports of _expand_director_of continue to work.
-_expand_director_of = expand_inbound_director_of
+def expand_inbound_director_of(
+    node_ids: list[str],
+    session: Any,
+) -> list[Triple]:
+    """Return deduplicated DIRECTOR_OF triples for Company anchors.
+
+    Runs an inbound DIRECTOR_OF lookup so that when a Company is the anchor,
+    its directors (Person nodes) are surfaced.  Non-Company anchors are
+    filtered inside Cypher via the :Company label — no Python filtering needed.
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        List of unique Triple instances with rel='DIRECTOR_OF'.
+    """
+    return _rows_to_triples(session.run(_Q_DIRECTOR_OF, {"node_ids": node_ids}))
 
 
 def expand_co_party_chain(
@@ -235,15 +233,11 @@ def expand_co_party_chain(
 ) -> list[Triple]:
     """Return deduplicated PARTY_TO triples for co-parties of Company anchors.
 
-    Public entry point for the co-party expansion.  Follows the 2-hop chain
-    (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor) so that supplier
-    companies sharing a contract with the anchor appear in the triple list.
-
-    Column aliases returned by the underlying Cypher (_Q_COPARTY):
-        src       — co.name (co-party company name)
-        rel       — 'PARTY_TO' (literal string)
-        dst       — c.contract_id (shared contract identity key)
-        chunk_id  — null (contracts are not chunks)
+    Follows the 2-hop chain (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor)
+    so that supplier companies sharing a contract with the anchor appear in the
+    triple list.  This lets a follow-up expand_co_party_directors call surface
+    those co-parties' directors.  Non-Company anchors are filtered in Cypher;
+    self-loops are excluded by WHERE co <> anchor.
 
     Args:
         node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
@@ -252,7 +246,7 @@ def expand_co_party_chain(
     Returns:
         List of unique Triple instances with rel='PARTY_TO'.
     """
-    return _expand_coparty(node_ids, session)
+    return _rows_to_triples(session.run(_Q_COPARTY, {"node_ids": node_ids}))
 
 
 def expand_co_party_directors(
@@ -266,12 +260,6 @@ def expand_co_party_directors(
     (anchor)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(co) and then finds
     (p:Person)-[:DIRECTOR_OF]->(co), returning the person-company relationship.
 
-    Column aliases returned by _Q_COPARTY_DIRECTORS:
-        src       — p.name  (director person name)
-        rel       — 'DIRECTOR_OF' (literal string)
-        dst       — co.name (co-party company name)
-        chunk_id  — null (Person nodes are not Chunks)
-
     Args:
         node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
         session:  Open Neo4j session.
@@ -279,47 +267,7 @@ def expand_co_party_directors(
     Returns:
         List of unique Triple instances with rel='DIRECTOR_OF'.
     """
-    rows = session.run(_Q_COPARTY_DIRECTORS, {"node_ids": node_ids})
-    seen: set[Triple] = set()
-    triples: list[Triple] = []
-    for row in rows:
-        triple = Triple(src=row["src"], rel=row["rel"], dst=row["dst"])
-        if triple not in seen:
-            seen.add(triple)
-            triples.append(triple)
-    return triples
-
-
-def _expand_coparty(
-    node_ids: list[str],
-    session: Any,
-) -> list[Triple]:
-    """Return deduplicated PARTY_TO triples for co-parties of Company anchors.
-
-    Follows the bidirectional chain (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor)
-    so that supplier companies sharing a contract with the anchor appear in the
-    triple list.  This lets a follow-up _expand_director_of call surface the
-    co-party's directors.
-
-    Non-Company anchors are filtered inside Cypher via the :Company label bind.
-    Self-loop co-parties (co == anchor) are excluded by WHERE co <> anchor.
-
-    Args:
-        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
-        session:  Open Neo4j session.
-
-    Returns:
-        List of unique Triple instances with rel='PARTY_TO'.
-    """
-    rows = session.run(_Q_COPARTY, {"node_ids": node_ids})
-    seen: set[Triple] = set()
-    triples: list[Triple] = []
-    for row in rows:
-        triple = Triple(src=row["src"], rel=row["rel"], dst=row["dst"])
-        if triple not in seen:
-            seen.add(triple)
-            triples.append(triple)
-    return triples
+    return _rows_to_triples(session.run(_Q_COPARTY_DIRECTORS, {"node_ids": node_ids}))
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +333,7 @@ def traverse_from_anchors(
             seen_triples.add(triple)
             triples.append(triple)
 
-    for triple in _expand_coparty(node_ids, session):
+    for triple in expand_co_party_chain(node_ids, session):
         if triple not in seen_triples:
             seen_triples.add(triple)
             triples.append(triple)
