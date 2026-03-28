@@ -156,6 +156,21 @@ _Q_DIRECTOR_OF: str = (
     "anchor.name AS dst, null AS chunk_id"
 )
 
+# Co-party expansion: finds Company nodes that share a Contract with an anchor
+# Company via the bidirectional PARTY_TO pattern.  Emitting (co.name, PARTY_TO,
+# c.contract_id) places the co-party and its contract in the triple list so that
+# a subsequent _expand_director_of call can surface the co-party's directors.
+# WHERE co <> anchor prevents self-loops when the anchor matches itself.
+# c.contract_id (not c.title) is used as dst to stay consistent with the
+# Contract identity key in entity resolution and _Q_1HOP.
+_Q_COPARTY: str = (
+    "UNWIND $node_ids AS nid "
+    "MATCH (anchor:Company) WHERE anchor.id = nid "
+    "MATCH (co)-[:PARTY_TO]->(c:Contract)<-[:PARTY_TO]-(anchor) "
+    "WHERE co <> anchor "
+    "RETURN co.name AS src, 'PARTY_TO' AS rel, c.contract_id AS dst, null AS chunk_id"
+)
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -190,6 +205,38 @@ def _expand_director_of(
     return triples
 
 
+def _expand_coparty(
+    node_ids: list[str],
+    session: Any,
+) -> list[Triple]:
+    """Return deduplicated PARTY_TO triples for co-parties of Company anchors.
+
+    Follows the bidirectional chain (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor)
+    so that supplier companies sharing a contract with the anchor appear in the
+    triple list.  This lets a follow-up _expand_director_of call surface the
+    co-party's directors.
+
+    Non-Company anchors are filtered inside Cypher via the :Company label bind.
+    Self-loop co-parties (co == anchor) are excluded by WHERE co <> anchor.
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        List of unique Triple instances with rel='PARTY_TO'.
+    """
+    rows = session.run(_Q_COPARTY, {"node_ids": node_ids})
+    seen: set[Triple] = set()
+    triples: list[Triple] = []
+    for row in rows:
+        triple = Triple(src=row["src"], rel=row["rel"], dst=row["dst"])
+        if triple not in seen:
+            seen.add(triple)
+            triples.append(triple)
+    return triples
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -207,8 +254,9 @@ def traverse_from_anchors(
     a Triple for every relationship edge traversed.  Both result lists are
     deduplicated before return.
 
-    Also performs an inbound DIRECTOR_OF expansion so that directors of Company
-    anchors are included even though that edge points toward the anchor.
+    Also performs two supplemental expansions:
+      - Inbound DIRECTOR_OF: directors of Company anchors (edge points toward anchor).
+      - Co-party PARTY_TO: companies sharing a Contract with Company anchors.
 
     Args:
         node_ids:  Domain-level identifiers (Company.id or
@@ -247,6 +295,11 @@ def traverse_from_anchors(
             chunk_ids.append(cid)
 
     for triple in _expand_director_of(node_ids, session):
+        if triple not in seen_triples:
+            seen_triples.add(triple)
+            triples.append(triple)
+
+    for triple in _expand_coparty(node_ids, session):
         if triple not in seen_triples:
             seen_triples.add(triple)
             triples.append(triple)

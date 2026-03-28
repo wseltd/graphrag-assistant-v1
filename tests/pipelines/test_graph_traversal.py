@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 from app.pipelines.graph_traversal import (
     GraphTraversalResult,
     Triple,
+    _expand_coparty,
     _expand_director_of,
     traverse_from_anchors,
 )
@@ -37,12 +38,12 @@ class TestSingleHopTraversal:
         assert Triple(src="1", rel="PARTY_TO", dst="2") in result.triples
         assert "CL001_c0" in result.chunk_ids
 
-    def test_max_hops_one_issues_two_db_calls(self) -> None:
-        """max_hops=1 issues exactly two session.run calls: main query + director-of expansion."""
+    def test_max_hops_one_issues_three_db_calls(self) -> None:
+        """max_hops=1 issues exactly three session.run calls: main query + director-of + coparty."""
         session = MagicMock()
         session.run.return_value = []
         traverse_from_anchors(["C1"], session, max_hops=1)
-        assert session.run.call_count == 2
+        assert session.run.call_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +135,7 @@ class TestDirectorOfInboundExpansion:
         session = MagicMock()
         # First call: main hop query (no outbound edges from this anchor)
         # Second call: _expand_director_of (one inbound DIRECTOR_OF edge)
+        # Third call: _expand_coparty (no co-parties for this anchor)
         session.run.side_effect = [
             [],
             [
@@ -144,6 +146,7 @@ class TestDirectorOfInboundExpansion:
                     "chunk_id": None,
                 }
             ],
+            [],
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert Triple(src="Jane Doe", rel="DIRECTOR_OF", dst="Acme Ltd") in result.triples
@@ -176,6 +179,7 @@ class TestDirectorOfInboundExpansion:
                     "chunk_id": None,
                 },
             ],
+            [],  # _expand_coparty: no co-parties
         ]
         result = traverse_from_anchors(["COMP_001"], session)
         director_triples = [
@@ -195,6 +199,7 @@ class TestDirectorOfInboundExpansion:
         session.run.side_effect = [
             [triple_row],  # main query also returned this triple
             [triple_row],  # expansion returns the same one
+            [],  # _expand_coparty: no co-parties
         ]
         result = traverse_from_anchors(["COMP_001"], session, max_hops=1)
         assert result.triples.count(
@@ -223,3 +228,81 @@ class TestDirectorOfInboundExpansion:
         assert len(result) == 1
         assert isinstance(result[0], Triple)
         assert result[0].rel == "DIRECTOR_OF"
+
+
+# ---------------------------------------------------------------------------
+# TestCopartyExpansion
+# ---------------------------------------------------------------------------
+
+
+class TestCopartyExpansion:
+    def test_coparty_expansion_returns_supplier_triples(self) -> None:
+        """Co-party supplier sharing a contract appears as a PARTY_TO triple.
+
+        (Supplier)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(Anchor) means the
+        supplier triple (supplier.name, PARTY_TO, contract_id) must appear in
+        the result so downstream DIRECTOR_OF expansion can find the supplier's
+        directors.
+        """
+        session = MagicMock()
+        session.run.side_effect = [
+            [],   # main hop query: no outbound edges from anchor
+            [],   # _expand_director_of: anchor has no directors
+            [     # _expand_coparty: one co-party found
+                {
+                    "src": "Supplier Co",
+                    "rel": "PARTY_TO",
+                    "dst": "CTR-001",
+                    "chunk_id": None,
+                }
+            ],
+        ]
+        result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
+        assert Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001") in result.triples
+
+    def test_coparty_duplicate_rows_deduplicated(self) -> None:
+        """Identical co-party rows returned by the query collapse to one triple."""
+        session = MagicMock()
+        session.run.side_effect = [
+            [],  # main hop query
+            [],  # _expand_director_of
+            [    # _expand_coparty: duplicate rows from multi-path Cypher expansion
+                {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None},
+                {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None},
+            ],
+        ]
+        result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
+        coparty_triples = [t for t in result.triples if t.src == "Supplier Co"]
+        assert len(coparty_triples) == 1
+
+    def test_coparty_does_not_duplicate_triple_already_in_main_query(self) -> None:
+        """If the main query already returned a co-party triple, it appears only once."""
+        shared_row = {"src": "Supplier Co", "rel": "PARTY_TO", "dst": "CTR-001", "chunk_id": None}
+        session = MagicMock()
+        session.run.side_effect = [
+            [shared_row],  # main hop query also returned the co-party edge
+            [],            # _expand_director_of
+            [shared_row],  # _expand_coparty returns the same triple
+        ]
+        result = traverse_from_anchors(["COMP_ANCHOR"], session, max_hops=1)
+        assert result.triples.count(Triple(src="Supplier Co", rel="PARTY_TO", dst="CTR-001")) == 1
+
+    def test_expand_coparty_returns_empty_for_no_rows(self) -> None:
+        """_expand_coparty returns an empty list when session yields no rows."""
+        session = MagicMock()
+        session.run.return_value = []
+        result = _expand_coparty(["COMP_001"], session)
+        assert result == []
+
+    def test_expand_coparty_returns_triple_list(self) -> None:
+        """_expand_coparty returns a list of Triple instances with rel PARTY_TO."""
+        session = MagicMock()
+        session.run.return_value = [
+            {"src": "Gamma Ltd", "rel": "PARTY_TO", "dst": "CTR-999", "chunk_id": None}
+        ]
+        result = _expand_coparty(["COMP_003"], session)
+        assert len(result) == 1
+        assert isinstance(result[0], Triple)
+        assert result[0].rel == "PARTY_TO"
+        assert result[0].src == "Gamma Ltd"
+        assert result[0].dst == "CTR-999"
