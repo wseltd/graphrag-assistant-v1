@@ -4,7 +4,7 @@ traverse_from_anchors resolves domain-level node IDs to Neo4j graph nodes and
 walks outbound relationships up to *max_hops* deep, collecting:
   - chunk_ids: all Chunk.chunk_id values reachable from the anchors.
   - triples:   deduplicated (src, rel, dst) relationship tuples, where src and
-               dst are string representations of Neo4j internal IDs.
+               dst are canonical entity names or IDs (not Neo4j internal IDs).
 
 Cypher safety
 -------------
@@ -17,6 +17,12 @@ Design
 Two module-level Cypher strings cover depths 1 and 2.  The 2-hop query uses
 ``[*1..2]``, which is a Cypher literal — not a parameter, not user-supplied.
 The 1-hop query uses a single direct MATCH for efficiency on shallow lookups.
+
+Triple.src and Triple.dst are projected using CASE expressions that select the
+canonical name property per node label rather than toString(id(...)). This
+makes triples human-readable when the citation_generator outputs them verbatim.
+Nodes whose labels do not match any branch fall back to toString(id(...)) so no
+edge is silently dropped.
 """
 from __future__ import annotations
 
@@ -37,9 +43,11 @@ class Triple:
     """A directed relationship triple collected during graph traversal.
 
     Attributes:
-        src: String form of the source Neo4j internal node ID.
+        src: Canonical name of the source node (e.g. company name, person name,
+             contract_id).  Falls back to toString(id(...)) for unknown labels.
         rel: Relationship type string (e.g. ``"PARTY_TO"``).
-        dst: String form of the target Neo4j internal node ID.
+        dst: Canonical name of the target node.  Falls back to toString(id(...))
+             for unknown labels.
     """
 
     src: str
@@ -66,30 +74,67 @@ class GraphTraversalResult:
 # Cypher queries (module-level constants, no runtime interpolation)
 # ---------------------------------------------------------------------------
 
+# CASE expression shared structure (explained once here):
+#   Contract → contract_id  (domain key, unique across the graph)
+#   Chunk    → chunk_id     (domain key, unique across the graph)
+#   Company / Person / Product → name  (human-readable canonical label)
+#   fallback → toString(id(...))  so no edge is silently dropped for unknown labels
+#
+# Chunk is never an anchor, so the src CASE has no Chunk branch.
+
 # 1-hop: direct outgoing neighbours of each anchor node.
+# anchor is always Company/Person/Product/Contract; b can be any label.
 _Q_1HOP: str = (
     "UNWIND $node_ids AS nid "
     "MATCH (anchor) WHERE anchor.id = nid OR anchor.contract_id = nid "
     "MATCH (anchor)-[r]->(b) "
     "RETURN "
-    "toString(id(anchor)) AS src, "
+    "CASE "
+    "WHEN 'Contract' IN labels(anchor) THEN anchor.contract_id "
+    "WHEN 'Company' IN labels(anchor) THEN anchor.name "
+    "WHEN 'Person' IN labels(anchor) THEN anchor.name "
+    "WHEN 'Product' IN labels(anchor) THEN anchor.name "
+    "ELSE toString(id(anchor)) "
+    "END AS src, "
     "type(r) AS rel, "
-    "toString(id(b)) AS dst, "
+    "CASE "
+    "WHEN 'Contract' IN labels(b) THEN b.contract_id "
+    "WHEN 'Chunk' IN labels(b) THEN b.chunk_id "
+    "WHEN 'Company' IN labels(b) THEN b.name "
+    "WHEN 'Person' IN labels(b) THEN b.name "
+    "WHEN 'Product' IN labels(b) THEN b.name "
+    "ELSE toString(id(b)) "
+    "END AS dst, "
     "CASE WHEN 'Chunk' IN labels(b) THEN b.chunk_id ELSE null END AS chunk_id"
 )
 
 # 2-hop: all paths of length 1 or 2 from each anchor.
 # The range literal [*1..2] is embedded directly — it is a Cypher constant,
 # not user input.
+# Because the path is unwound into individual relationship edges, there are no
+# named node variables — startNode(r) and endNode(r) must be used for the CASE.
 _Q_2HOP: str = (
     "UNWIND $node_ids AS nid "
     "MATCH (anchor) WHERE anchor.id = nid OR anchor.contract_id = nid "
     "MATCH p = (anchor)-[*1..2]->(b) "
     "UNWIND relationships(p) AS r "
     "RETURN "
-    "toString(id(startNode(r))) AS src, "
+    "CASE "
+    "WHEN 'Contract' IN labels(startNode(r)) THEN startNode(r).contract_id "
+    "WHEN 'Company' IN labels(startNode(r)) THEN startNode(r).name "
+    "WHEN 'Person' IN labels(startNode(r)) THEN startNode(r).name "
+    "WHEN 'Product' IN labels(startNode(r)) THEN startNode(r).name "
+    "ELSE toString(id(startNode(r))) "
+    "END AS src, "
     "type(r) AS rel, "
-    "toString(id(endNode(r))) AS dst, "
+    "CASE "
+    "WHEN 'Contract' IN labels(endNode(r)) THEN endNode(r).contract_id "
+    "WHEN 'Chunk' IN labels(endNode(r)) THEN endNode(r).chunk_id "
+    "WHEN 'Company' IN labels(endNode(r)) THEN endNode(r).name "
+    "WHEN 'Person' IN labels(endNode(r)) THEN endNode(r).name "
+    "WHEN 'Product' IN labels(endNode(r)) THEN endNode(r).name "
+    "ELSE toString(id(endNode(r))) "
+    "END AS dst, "
     "CASE WHEN 'Chunk' IN labels(endNode(r)) "
     "THEN endNode(r).chunk_id ELSE null END AS chunk_id"
 )
