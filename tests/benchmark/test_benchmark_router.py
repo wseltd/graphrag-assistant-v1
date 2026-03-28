@@ -393,8 +393,8 @@ def _capture_fn_results(app: FastAPI) -> tuple[dict, dict]:
     return captured["plain_result"], captured["graph_result"]
 
 
-def test_graph_rag_fn_result_has_same_top_level_keys_as_plain_rag_fn() -> None:
-    # Both callables must return dicts with exactly the same 5 top-level keys so
+def test_graph_rag_fn_result_top_level_keys_match_plain_rag_fn() -> None:
+    # Both callables must return dicts with exactly the same top-level keys so
     # run_benchmark and scoring functions can consume them identically.
     app = FastAPI()
     app.include_router(router)
@@ -407,9 +407,9 @@ def test_graph_rag_fn_result_has_same_top_level_keys_as_plain_rag_fn() -> None:
     assert set(plain_result.keys()) == set(graph_result.keys())
 
 
-def test_graph_rag_fn_text_citations_include_doc_id() -> None:
-    # score_citation_coverage keys into text_citations[*].chunk_id; doc_id must
-    # also be present so benchmark output is structurally identical to plain_rag.
+def test_graph_rag_fn_text_citation_has_doc_id_field() -> None:
+    # doc_id must be present in every text_citations item so the benchmark
+    # output shape is structurally identical to plain_rag.
     app = FastAPI()
     app.include_router(router)
     app.state.neo4j_driver = MagicMock()
@@ -423,7 +423,7 @@ def test_graph_rag_fn_text_citations_include_doc_id() -> None:
         assert "doc_id" in citation, f"citation missing doc_id: {citation}"
 
 
-def test_graph_rag_fn_text_citations_use_quote_not_excerpt() -> None:
+def test_graph_rag_fn_text_citation_has_quote_not_excerpt() -> None:
     # Regression: _graph_rag_fn previously used the old field name `excerpt`.
     # After Bug 5 renamed Citation.excerpt → Citation.quote, the output key
     # must be `quote` to match TextCitation and plain_rag text_citations shape.
