@@ -53,6 +53,14 @@ def test_all_expected_path_prefixes_registered():
     assert any(p.startswith("/api/v1") for p in paths)
 
 
+def test_graph_rag_and_plain_rag_paths_registered():
+    # Regression guard: fails when graph_rag_router/plain_rag_router are absent from create_app().
+    app = create_app()
+    paths = {r.path for r in app.routes if hasattr(r, "path")}
+    assert "/query/graph-rag" in paths, f"/query/graph-rag not found; registered: {paths}"
+    assert "/query/plain-rag" in paths, f"/query/plain-rag not found; registered: {paths}"
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -77,9 +85,10 @@ def test_unreachable_neo4j_raises_runtime_error():
     with patch("app.lifespan.Neo4jClient", return_value=mock_client):
         with patch("app.lifespan.SentenceTransformerProvider"):
             app = create_app()
-            with pytest.raises(RuntimeError, match="Neo4j unreachable"):
+            with pytest.raises(RuntimeError, match="Neo4j unreachable") as exc_info:
                 with TestClient(app):
                     pass
+            assert "Neo4j unreachable" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
