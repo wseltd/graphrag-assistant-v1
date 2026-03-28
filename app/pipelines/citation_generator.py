@@ -15,7 +15,7 @@ When both triples and chunks are empty a single fallback line is appended.
 
 text_citations
 --------------
-One Citation per RankedChunk in input order.  excerpt is the first
+One Citation per RankedChunk in input order.  quote is the first
 _EXCERPT_MAX characters of chunk.text (the full text when shorter).
 """
 from __future__ import annotations
@@ -38,11 +38,11 @@ class Citation:
 
     Attributes:
         chunk_id: Matches RankedChunk.chunk_id.
-        excerpt:  First _EXCERPT_MAX characters of the chunk text.
+        quote:    First _EXCERPT_MAX characters of the chunk text.
     """
 
     chunk_id: str
-    excerpt: str
+    quote: str
 
 
 @dataclass
@@ -98,7 +98,7 @@ def generate_answer(
     text_citations = [
         Citation(
             chunk_id=chunk.chunk_id,
-            excerpt=chunk.text[:_EXCERPT_MAX],
+            quote=chunk.text[:_EXCERPT_MAX],
         )
         for chunk in chunks
     ]

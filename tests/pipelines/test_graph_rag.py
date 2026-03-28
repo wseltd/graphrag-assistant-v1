@@ -374,7 +374,7 @@ class TestEndToEndReturnsResult:
         triple = _triple("5", "PARTY_TO", "12")
         traversal = _traversal(["CT001_c0"], [triple])
         chunk = _chunk("CT001_c0", text="Contract clause text.")
-        citation = Citation(chunk_id="CT001_c0", excerpt="Contract clause text.")
+        citation = Citation(chunk_id="CT001_c0", quote="Contract clause text.")
         answer_text = (
             "Query: test\nGraph context:\n  5 --[PARTY_TO]--> 12\n"
             "Supporting text:\n  [CT001_c0] Contract clause text."
