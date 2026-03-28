@@ -838,3 +838,124 @@ def test_multi_anchor_chunk_ids_all_collected() -> None:
     assert "CL001_c0" in result.chunk_ids
     assert "CL002_c0" in result.chunk_ids
     assert len(result.chunk_ids) == 2  # no duplicates
+
+
+# ---------------------------------------------------------------------------
+# Tests for Clause/Address dst string plumbing through traverse_from_anchors
+# (T016 — verifies BUG 2 and BUG 3 Python-layer row→Triple mapping)
+# ---------------------------------------------------------------------------
+# NOTE on test strategy: the CASE expressions that select clause_id and city
+# run inside Neo4j, not in Python.  MagicMock returns whatever string value we
+# inject, so these tests cannot prove the Cypher constant is correct — they
+# prove only that the Python plumbing (row["dst"] → Triple.dst) is transparent.
+# Full regression proof requires either a Cypher integration test against a
+# live Neo4j instance or code review of the _Q_1HOP / _Q_2HOP constants.
+# The negative guard (`assert not Triple.dst.startswith('toString(')`) catches
+# a future refactor that accidentally injects a toString(id(...)) literal as
+# a mock return value, making a broken Cypher constant look like a passing test.
+
+
+def test_clause_dst_returns_clause_id_string_in_one_hop() -> None:
+    """1-hop traversal: a row with a clause_id string dst passes through unchanged.
+
+    Simulates _Q_1HOP returning a Clause-typed row where the Cypher CASE
+    expression has projected b.clause_id correctly.  The Python layer must
+    not transform or discard the string; Triple.dst must equal the injected value.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        # Call 1: main _Q_1HOP query — Clause node as dst
+        [{"src": "Acme Corp", "rel": "HAS_CLAUSE", "dst": "CL-007", "chunk_id": None}],
+        [],   # Call 2: expand_inbound_director_of
+        [],   # Call 3: expand_co_party_chain
+        [],   # Call 4: expand_co_party_directors
+        [],   # Call 5: _collect_anchor_chunks
+    ]
+    result = traverse_from_anchors(["CONTRACT_001"], session, max_hops=1)
+    assert len(result.triples) == 1
+    triple = result.triples[0]
+    assert triple.dst == "CL-007", "Clause node dst must be the clause_id string"
+    # Guard: catches a refactor that re-introduces toString(id(...)) as injected value.
+    # A real CASE-branch regression is only detectable via Cypher integration tests.
+    assert not triple.dst.startswith("toString("), (
+        "dst must not be a toString(id(...)) expression; "
+        "full proof requires a Cypher integration test"
+    )
+
+
+def test_clause_dst_returns_clause_id_string_in_two_hop() -> None:
+    """2-hop traversal: a row with a clause_id string dst passes through unchanged.
+
+    _Q_1HOP and _Q_2HOP are independent Cypher constants; a missing Clause
+    branch in _Q_2HOP would not be caught by the 1-hop test above.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        # Call 1: main _Q_2HOP query — Clause node as dst at hop depth 1 or 2
+        [{"src": "Beta Ltd", "rel": "HAS_CLAUSE", "dst": "CL-042", "chunk_id": None}],
+        [],   # Call 2: expand_inbound_director_of
+        [],   # Call 3: expand_co_party_chain
+        [],   # Call 4: expand_co_party_directors
+        [],   # Call 5: _collect_anchor_chunks
+    ]
+    result = traverse_from_anchors(["CONTRACT_002"], session, max_hops=2)
+    assert len(result.triples) == 1
+    triple = result.triples[0]
+    assert triple.dst == "CL-042", "Clause node dst must be the clause_id string"
+    assert not triple.dst.startswith("toString("), (
+        "dst must not be a toString(id(...)) expression; "
+        "full proof requires a Cypher integration test"
+    )
+
+
+def test_address_dst_returns_city_string_in_one_hop() -> None:
+    """1-hop traversal: a row with a city string dst passes through unchanged.
+
+    Simulates _Q_1HOP returning an Address-typed row where the Cypher CASE
+    expression has projected b.city correctly.  The Python layer must not
+    transform or discard the string; Triple.dst must equal the injected value.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        # Call 1: main _Q_1HOP query — Address node as dst
+        [{"src": "Gamma Corp", "rel": "REGISTERED_AT", "dst": "Berlin", "chunk_id": None}],
+        [],   # Call 2: expand_inbound_director_of
+        [],   # Call 3: expand_co_party_chain
+        [],   # Call 4: expand_co_party_directors
+        [],   # Call 5: _collect_anchor_chunks
+    ]
+    result = traverse_from_anchors(["COMP_GAMMA"], session, max_hops=1)
+    assert len(result.triples) == 1
+    triple = result.triples[0]
+    assert triple.dst == "Berlin", "Address node dst must be the city string"
+    # Guard: catches a refactor that re-introduces toString(id(...)) as injected value.
+    # A real CASE-branch regression is only detectable via Cypher integration tests.
+    assert not triple.dst.startswith("toString("), (
+        "dst must not be a toString(id(...)) expression; "
+        "full proof requires a Cypher integration test"
+    )
+
+
+def test_address_dst_returns_city_string_in_two_hop() -> None:
+    """2-hop traversal: a row with a city string dst passes through unchanged.
+
+    _Q_1HOP and _Q_2HOP are independent Cypher constants; a missing Address
+    branch in _Q_2HOP would not be caught by the 1-hop test above.
+    """
+    session = MagicMock()
+    session.run.side_effect = [
+        # Call 1: main _Q_2HOP query — Address node as dst at hop depth 1 or 2
+        [{"src": "Delta Inc", "rel": "REGISTERED_AT", "dst": "Amsterdam", "chunk_id": None}],
+        [],   # Call 2: expand_inbound_director_of
+        [],   # Call 3: expand_co_party_chain
+        [],   # Call 4: expand_co_party_directors
+        [],   # Call 5: _collect_anchor_chunks
+    ]
+    result = traverse_from_anchors(["COMP_DELTA"], session, max_hops=2)
+    assert len(result.triples) == 1
+    triple = result.triples[0]
+    assert triple.dst == "Amsterdam", "Address node dst must be the city string"
+    assert not triple.dst.startswith("toString("), (
+        "dst must not be a toString(id(...)) expression; "
+        "full proof requires a Cypher integration test"
+    )
