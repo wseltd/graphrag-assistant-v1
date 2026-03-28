@@ -177,7 +177,7 @@ _Q_COPARTY: str = (
 # ---------------------------------------------------------------------------
 
 
-def _expand_director_of(
+def expand_inbound_director_of(
     node_ids: list[str],
     session: Any,
 ) -> list[Triple]:
@@ -186,6 +186,9 @@ def _expand_director_of(
     Runs an inbound DIRECTOR_OF lookup so that when a Company is the anchor,
     its directors (Person nodes) are surfaced.  Non-Company anchors are
     filtered inside Cypher via the :Company label — no Python filtering needed.
+
+    Column aliases returned by _Q_DIRECTOR_OF: src (p.name), rel, dst (anchor.name),
+    chunk_id (always null — directors are not Chunks).
 
     Args:
         node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
@@ -203,6 +206,10 @@ def _expand_director_of(
             seen.add(triple)
             triples.append(triple)
     return triples
+
+
+# Private alias kept so existing test imports of _expand_director_of continue to work.
+_expand_director_of = expand_inbound_director_of
 
 
 def _expand_coparty(
@@ -294,7 +301,7 @@ def traverse_from_anchors(
             seen_chunk_ids.add(cid)
             chunk_ids.append(cid)
 
-    for triple in _expand_director_of(node_ids, session):
+    for triple in expand_inbound_director_of(node_ids, session):
         if triple not in seen_triples:
             seen_triples.add(triple)
             triples.append(triple)

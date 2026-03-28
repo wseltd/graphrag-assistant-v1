@@ -17,6 +17,7 @@ from app.pipelines.graph_traversal import (
     Triple,
     _expand_coparty,
     _expand_director_of,
+    expand_inbound_director_of,
     traverse_from_anchors,
 )
 
@@ -376,3 +377,50 @@ class TestNamedEntityTriples:
         assert result.chunk_ids == []
         assert result.triples == []
         session.run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for expand_inbound_director_of (T005)
+# ---------------------------------------------------------------------------
+# The hard part: _Q_DIRECTOR_OF returns column aliases src (p.name), rel, dst
+# (anchor.name), chunk_id.  A key mismatch between mock row dict and the RETURN
+# clause would cause a silent wrong-data bug or a KeyError.  Both the success
+# path and the empty-graph guard are tested here.
+
+
+def test_director_found_via_company_anchor_returns_named_triple() -> None:
+    """expand_inbound_director_of returns one Triple with canonical person and company names.
+
+    Row keys must exactly match _Q_DIRECTOR_OF's RETURN aliases (src, rel, dst).
+    The function must NOT return raw Neo4j internal element IDs — src and dst
+    must be the projected name strings, not toString(id(...)) values.
+    """
+    session = MagicMock()
+    # Column aliases from _Q_DIRECTOR_OF: p.name AS src, 'DIRECTOR_OF' AS rel,
+    # anchor.name AS dst, null AS chunk_id.
+    session.run.return_value = [
+        {"src": "Jane Doe", "rel": "DIRECTOR_OF", "dst": "Acme Ltd", "chunk_id": None}
+    ]
+    result = expand_inbound_director_of(["COMP_001"], session)
+
+    assert len(result) == 1
+    triple = result[0]
+    assert isinstance(triple, Triple)
+    assert triple.src == "Jane Doe", "src must be the person's name, not an internal ID"
+    assert triple.rel == "DIRECTOR_OF"
+    assert triple.dst == "Acme Ltd", "dst must be the company's name, not an internal ID"
+    # Guard against accidental toString(id(...)) values leaking through
+    assert not triple.src.startswith("toString("), "src must not be a raw Neo4j ID expression"
+    assert not triple.dst.startswith("toString("), "dst must not be a raw Neo4j ID expression"
+
+
+def test_company_with_no_directors_returns_empty_list() -> None:
+    """expand_inbound_director_of returns [] when no Person is directed at the anchor.
+
+    This guards the empty-graph case: a Company node with no inbound
+    DIRECTOR_OF edges must yield an empty list, not raise or return None.
+    """
+    session = MagicMock()
+    session.run.return_value = []
+    result = expand_inbound_director_of(["COMP_NODIRECTORS"], session)
+    assert result == []
