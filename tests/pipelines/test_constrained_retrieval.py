@@ -25,8 +25,8 @@ def _make_store(*results: dict) -> MagicMock:
     return store
 
 
-def _chunk(chunk_id: str, text: str, score: float) -> dict:
-    return {"chunk_id": chunk_id, "text": text, "score": score}
+def _chunk(chunk_id: str, text: str, score: float, doc_id: str = "") -> dict:
+    return {"chunk_id": chunk_id, "text": text, "score": score, "doc_id": doc_id}
 
 
 # ---------------------------------------------------------------------------
@@ -205,9 +205,10 @@ class TestDocId:
         assert len(result) == 1
         assert result[0].doc_id == "contract-42"
 
-    def test_doc_id_defaults_to_empty_string_when_absent_from_dict(self) -> None:
-        # _chunk() helper omits doc_id; .get fallback must supply "" not raise KeyError.
-        store = _make_store(_chunk("c1", "text", 0.8))
+    def test_doc_id_defaults_to_empty_when_absent_from_result(self) -> None:
+        # Use a raw dict with no doc_id key so this test fails if the
+        # implementation uses r["doc_id"] instead of r.get("doc_id", "").
+        store = _make_store({"chunk_id": "c1", "text": "text", "score": 0.8})
         result = retrieve_constrained(
             query="q",
             allowed_chunk_ids=["c1"],
