@@ -41,7 +41,7 @@ class TestSingleHopTraversal:
         assert Triple(src="1", rel="PARTY_TO", dst="2") in result.triples
         assert "CL001_c0" in result.chunk_ids
 
-    def test_max_hops_one_issues_three_db_calls(self) -> None:
+    def test_max_hops_one_issues_four_db_calls(self) -> None:
         """max_hops=1 issues four session.run calls.
 
         Calls: main query, director-of expansion, coparty expansion, coparty-directors expansion.
@@ -322,6 +322,94 @@ class TestCopartyExpansion:
 
 
 # ---------------------------------------------------------------------------
+# TestCoPartyDirectorsExpansion
+# ---------------------------------------------------------------------------
+# The risky paths: (1) column-alias fidelity — mock row keys must exactly
+# match _Q_COPARTY_DIRECTORS RETURN aliases (src, rel, dst, chunk_id); a wrong
+# key causes a silent KeyError only at runtime. (2) deduplication — the same
+# person directing multiple co-parties sharing one anchor contract produces
+# duplicate rows; the seen: set[Triple] guard inside expand_co_party_directors
+# must collapse them before they reach the caller.
+
+
+class TestCoPartyDirectorsExpansion:
+    def test_co_party_directors_returns_named_triples(self) -> None:
+        """expand_co_party_directors maps _Q_COPARTY_DIRECTORS row aliases to Triple fields.
+
+        Row keys must exactly match the RETURN aliases (src, rel, dst, chunk_id).
+        A wrong key causes a silent KeyError at runtime — this test is the
+        safety net for the column-alias contract.
+        """
+        session = MagicMock()
+        # Column aliases from _Q_COPARTY_DIRECTORS:
+        #   p.name AS src, 'DIRECTOR_OF' AS rel, co.name AS dst, null AS chunk_id
+        session.run.return_value = [
+            {
+                "src": "Bob Smith",
+                "rel": "DIRECTOR_OF",
+                "dst": "Supplier Co",
+                "chunk_id": None,
+            }
+        ]
+        result = expand_co_party_directors(["ANCHOR_001"], session)
+
+        assert len(result) == 1
+        triple = result[0]
+        assert isinstance(triple, Triple)
+        assert triple.src == "Bob Smith", "src must be the director's name, not an internal ID"
+        assert triple.rel == "DIRECTOR_OF"
+        assert triple.dst == "Supplier Co", "dst must be the co-party company name"
+        assert not triple.src.startswith("toString(")
+        assert not triple.dst.startswith("toString(")
+
+    def test_co_party_directors_duplicate_rows_deduplicated(self) -> None:
+        """Duplicate rows from the query collapse to one Triple via the internal seen set.
+
+        _Q_COPARTY_DIRECTORS can return duplicate rows when a director sits on
+        multiple contracts that all share the same anchor, each producing an
+        identical (p.name, DIRECTOR_OF, co.name) projection.  The seen: set[Triple]
+        guard inside expand_co_party_directors must collapse them before they
+        reach the caller.  Two identical rows in → one Triple out.
+        """
+        session = MagicMock()
+        dup_row = {
+            "src": "Alice Jones",
+            "rel": "DIRECTOR_OF",
+            "dst": "Beta Corp",
+            "chunk_id": None,
+        }
+        session.run.return_value = [dup_row, dup_row]
+        result = expand_co_party_directors(["ANCHOR_001"], session)
+
+        assert len(result) == 1
+        assert result[0] == Triple(src="Alice Jones", rel="DIRECTOR_OF", dst="Beta Corp")
+
+    def test_co_party_directors_triples_appear_in_traverse_result(self) -> None:
+        """Co-party director triples from expand_co_party_directors merge into traverse output.
+
+        Call order: main query (1) → expand_inbound_director_of (2) →
+        _expand_coparty (3) → expand_co_party_directors (4).  The fourth call's
+        triples must appear in the final GraphTraversalResult.
+        """
+        session = MagicMock()
+        session.run.side_effect = [
+            [],  # main hop query: no outbound edges from anchor
+            [],  # expand_inbound_director_of: no direct directors of anchor
+            [],  # _expand_coparty: co-party PARTY_TO triples (not the focus here)
+            [    # expand_co_party_directors: one director of a co-party company
+                {
+                    "src": "Carol White",
+                    "rel": "DIRECTOR_OF",
+                    "dst": "Gamma Ltd",
+                    "chunk_id": None,
+                }
+            ],
+        ]
+        result = traverse_from_anchors(["ANCHOR_001"], session, max_hops=1)
+        assert Triple(src="Carol White", rel="DIRECTOR_OF", dst="Gamma Ltd") in result.triples
+
+
+# ---------------------------------------------------------------------------
 # TestNamedEntityTriples
 # ---------------------------------------------------------------------------
 
@@ -552,3 +640,43 @@ def test_co_party_directors_no_directors_returns_empty_list() -> None:
     session.run.return_value = []
     result = expand_co_party_directors(["COMP_NO_COPARTY_DIRECTORS"], session)
     assert result == []
+
+
+def test_co_party_directors_empty_result_returns_empty_list() -> None:
+    """expand_co_party_directors returns [] when the session yields no rows.
+
+    Guards the empty-graph boundary: no co-parties, no directors, or anchor not
+    a Company — all produce zero rows.  The function must return [], not raise.
+    """
+    session = MagicMock()
+    session.run.return_value = []
+    result = expand_co_party_directors(["COMP_EMPTY"], session)
+    assert result == []
+
+
+def test_co_party_directors_deduped_against_director_of_in_traverse() -> None:
+    """A triple from both expand_inbound_director_of and expand_co_party_directors appears once.
+
+    Simulates the case where the same (person, DIRECTOR_OF, company) row is
+    returned by both expansion functions — e.g. an unusual graph structure where
+    the same person and company name combination surfaces from two different
+    Cypher traversal paths.  The shared seen_triples guard in traverse_from_anchors
+    must absorb the duplicate so only one Triple appears in the result.
+    """
+    shared_row = {
+        "src": "Shared Director",
+        "rel": "DIRECTOR_OF",
+        "dst": "Overlap Corp",
+        "chunk_id": None,
+    }
+    session = MagicMock()
+    session.run.side_effect = [
+        [],             # main hop query
+        [shared_row],   # expand_inbound_director_of
+        [],             # _expand_coparty
+        [shared_row],   # expand_co_party_directors returns the same triple
+    ]
+    result = traverse_from_anchors(["ANCHOR_001"], session, max_hops=1)
+    assert result.triples.count(
+        Triple(src="Shared Director", rel="DIRECTOR_OF", dst="Overlap Corp")
+    ) == 1
