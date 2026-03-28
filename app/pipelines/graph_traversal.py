@@ -212,6 +212,32 @@ def expand_inbound_director_of(
 _expand_director_of = expand_inbound_director_of
 
 
+def expand_co_party_chain(
+    node_ids: list[str],
+    session: Any,
+) -> list[Triple]:
+    """Return deduplicated PARTY_TO triples for co-parties of Company anchors.
+
+    Public entry point for the co-party expansion.  Follows the 2-hop chain
+    (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor) so that supplier
+    companies sharing a contract with the anchor appear in the triple list.
+
+    Column aliases returned by the underlying Cypher (_Q_COPARTY):
+        src       — co.name (co-party company name)
+        rel       — 'PARTY_TO' (literal string)
+        dst       — c.contract_id (shared contract identity key)
+        chunk_id  — null (contracts are not chunks)
+
+    Args:
+        node_ids: Domain-level node IDs passed as ``$node_ids`` parameter.
+        session:  Open Neo4j session.
+
+    Returns:
+        List of unique Triple instances with rel='PARTY_TO'.
+    """
+    return _expand_coparty(node_ids, session)
+
+
 def _expand_coparty(
     node_ids: list[str],
     session: Any,

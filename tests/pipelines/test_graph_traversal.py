@@ -17,6 +17,7 @@ from app.pipelines.graph_traversal import (
     Triple,
     _expand_coparty,
     _expand_director_of,
+    expand_co_party_chain,
     expand_inbound_director_of,
     traverse_from_anchors,
 )
@@ -423,4 +424,64 @@ def test_company_with_no_directors_returns_empty_list() -> None:
     session = MagicMock()
     session.run.return_value = []
     result = expand_inbound_director_of(["COMP_NODIRECTORS"], session)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for expand_co_party_chain (T006)
+# ---------------------------------------------------------------------------
+# The hard part: _Q_COPARTY returns column aliases src (co.name), rel (literal
+# 'PARTY_TO'), dst (c.contract_id), chunk_id (null).  A mismatch between the
+# mock row keys and the RETURN clause aliases would cause a silent wrong-data bug
+# or a KeyError at runtime.  Both the resolved-chain and broken-chain cases are
+# exercised here.
+
+
+def test_co_party_chain_resolves_to_named_triple() -> None:
+    """expand_co_party_chain returns one Triple with named company and contract values.
+
+    Row keys must exactly match _Q_COPARTY's RETURN aliases:
+        src       → co.name   (co-party company name string)
+        rel       → 'PARTY_TO' (literal)
+        dst       → c.contract_id (shared contract identity key)
+        chunk_id  → null
+
+    Triple.src and Triple.dst must be the projected name/id strings, not
+    Neo4j internal element IDs (i.e. not toString(id(...)) expressions).
+    This covers the Company PARTY_TO Contract PARTY_TO CoParty 2-hop path.
+    """
+    session = MagicMock()
+    # Column aliases from _Q_COPARTY: co.name AS src, 'PARTY_TO' AS rel,
+    # c.contract_id AS dst, null AS chunk_id.
+    session.run.return_value = [
+        {
+            "src": "Supplier Co",
+            "rel": "PARTY_TO",
+            "dst": "CTR-001",
+            "chunk_id": None,
+        }
+    ]
+    result = expand_co_party_chain(["COMP_ANCHOR"], session)
+
+    assert len(result) == 1
+    triple = result[0]
+    assert isinstance(triple, Triple)
+    assert triple.src == "Supplier Co", "src must be the co-party company name, not an internal ID"
+    assert triple.rel == "PARTY_TO"
+    assert triple.dst == "CTR-001", "dst must be the contract_id, not an internal ID"
+    # Guard against toString(id(...)) leaking through from a missing CASE branch
+    assert not triple.src.startswith("toString("), "src must not be a raw Neo4j ID expression"
+    assert not triple.dst.startswith("toString("), "dst must not be a raw Neo4j ID expression"
+
+
+def test_broken_co_party_chain_returns_empty_list() -> None:
+    """expand_co_party_chain returns [] when the company is not party to any contract.
+
+    Simulates a Company anchor with no outbound PARTY_TO edges, i.e. the 2-hop
+    chain (co)-[:PARTY_TO]->(Contract)<-[:PARTY_TO]-(anchor) is broken at the
+    first hop.  The function must return an empty list, not raise or return None.
+    """
+    session = MagicMock()
+    session.run.return_value = []
+    result = expand_co_party_chain(["COMP_NO_CONTRACTS"], session)
     assert result == []
