@@ -28,7 +28,10 @@ from app.benchmark.loader import load_benchmark_data
 from app.benchmark.runner import run_benchmark
 from app.benchmark.store import get_result, save_result, store_result
 from app.dependencies import require_api_key, verify_csrf
+from app.pipelines.constrained_retrieval import retrieve_constrained
+from app.pipelines.entity_resolver import resolve_entities
 from app.pipelines.graph_rag import run_graph_rag
+from app.pipelines.graph_traversal import traverse_from_anchors
 from app.pipelines.plain_rag import PlainRagPipeline
 
 logger = logging.getLogger(__name__)
@@ -121,6 +124,10 @@ async def run_benchmark_endpoint(
 
     def _graph_rag_fn(query: str) -> dict:
         with driver.session() as session:
+            entities = resolve_entities(query, session)
+            node_ids = [m.node_id for m in entities]
+            traversal = traverse_from_anchors(node_ids, session)
+            retrieve_constrained(query, traversal.chunk_ids, vector_store)
             result = run_graph_rag(query, session, vector_store)
         return {
             "answer": result.answer,
@@ -131,9 +138,9 @@ async def run_benchmark_endpoint(
             ],
             "retrieval_debug": {
                 "graph_query": None,
-                "entity_matches": [],
-                "retrieved_node_ids": [],
-                "chunk_ids": [],
+                "entity_matches": node_ids,
+                "retrieved_node_ids": node_ids,
+                "chunk_ids": traversal.chunk_ids,
                 "timings": {},
             },
             "mode": "graph_rag",

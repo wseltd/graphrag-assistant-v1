@@ -439,3 +439,58 @@ def test_graph_rag_fn_text_citation_has_quote_not_excerpt() -> None:
     for citation in graph_result["text_citations"]:
         assert "quote" in citation, f"citation missing quote: {citation}"
         assert "excerpt" not in citation, f"citation should not have excerpt: {citation}"
+
+
+def test_graph_rag_fn_retrieval_debug_populated_from_pipeline_stages() -> None:
+    # Regression: _graph_rag_fn previously hardcoded empty lists for
+    # entity_matches, retrieved_node_ids, and chunk_ids.  After the fix those
+    # fields must be populated from the real pipeline stage outputs.
+    from app.pipelines.entity_resolver import EntityMatch
+    from app.pipelines.graph_traversal import GraphTraversalResult
+
+    app = FastAPI()
+    app.include_router(router)
+    mock_driver = MagicMock()
+    mock_session = MagicMock()
+    mock_driver.session.return_value.__enter__ = lambda s: mock_session
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+    app.state.neo4j_driver = mock_driver
+    app.state.embedding_provider = MagicMock()
+    app.state.generation_provider = MagicMock()
+
+    captured: dict = {}
+    mock_entities = [
+        EntityMatch(node_id="node-1", label="Company", name="Acme Corp", score=1.0),
+        EntityMatch(node_id="node-2", label="Contract", name="Contract A", score=0.8),
+    ]
+    mock_traversal = GraphTraversalResult(chunk_ids=["ck-1", "ck-2"], triples=[])
+    mock_gen_result = _make_graph_gen_result()
+
+    def _spy(queries, answers, plain_rag_fn, graph_rag_fn):
+        captured["graph_result"] = graph_rag_fn("Acme Corp contract terms")
+        return {
+            "run_id": "deadbeef00000000",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "query_results": [],
+            "summary": {},
+        }
+
+    with (
+        patch("app.benchmark.router.load_benchmark_data", return_value=([], [])),
+        patch("app.benchmark.router.run_benchmark", side_effect=_spy),
+        patch("app.benchmark.router.save_result", return_value="out.json"),
+        patch("app.benchmark.router.run_graph_rag", return_value=mock_gen_result),
+        patch("app.benchmark.router.resolve_entities", return_value=mock_entities),
+        patch("app.benchmark.router.traverse_from_anchors", return_value=mock_traversal),
+        patch("app.benchmark.router.retrieve_constrained", return_value=[]),
+    ):
+        client = TestClient(app)
+        resp = client.post("/benchmark/run", headers=_HEADERS)
+
+    assert resp.status_code == 202
+    debug = captured["graph_result"]["retrieval_debug"]
+    # entity_matches and retrieved_node_ids come from resolve_entities node IDs
+    assert debug["entity_matches"] == ["node-1", "node-2"]
+    assert debug["retrieved_node_ids"] == ["node-1", "node-2"]
+    # chunk_ids come from traversal.chunk_ids
+    assert debug["chunk_ids"] == ["ck-1", "ck-2"]
