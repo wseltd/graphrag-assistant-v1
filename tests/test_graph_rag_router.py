@@ -1,8 +1,9 @@
 """Tests for app.routers.graph_rag — POST /query/graph-rag (T030.c).
 
 Covers: request validation (2), retrieval_debug completeness for plain-rag
-(3) and graph-rag (3), graph_evidence format (3), happy-path HTTP 200 (2).
-Total: 13 tests.
+(3) and graph-rag (3), graph_evidence format (3), happy-path HTTP 200 (2),
+doc_id provenance through chunks_dicts (3).
+Total: 16 tests.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from app.pipelines.entity_resolver import EntityMatch
 from app.pipelines.graph_traversal import GraphTraversalResult, Triple
 from app.routers.graph_rag_router import router
 from app.routers.plain_rag_router import router as plain_rag_router
+from graphrag_assistant.providers.generation_stub import TemplateGenerationProvider
 from graphrag_assistant.schemas import (
     AnswerSchema,
     GraphFact,
@@ -243,3 +245,199 @@ def test_plain_rag_happy_path_returns_200() -> None:
 def test_graph_rag_happy_path_returns_200() -> None:
     resp = _call_graph_rag()
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# doc_id provenance through chunks_dicts (3)
+# ---------------------------------------------------------------------------
+
+
+def test_graph_rag_text_citation_doc_id_from_ranked_chunk() -> None:
+    """doc_id from RankedChunk must flow through chunks_dicts to TextCitation.
+
+    Uses a real TemplateGenerationProvider so the full dict-to-TextCitation
+    mapping executes end-to-end.  Asserts the response JSON carries the
+    exact doc_id that was on the RankedChunk.
+    """
+    matches = [
+        EntityMatch(node_id="C001", label="Company", name="Acme", score=1.0)
+    ]
+    traversal = GraphTraversalResult(chunk_ids=["c1"], triples=[])
+    chunks = [
+        RankedChunk(chunk_id="c1", doc_id="CT-ACME-001", text="Acme supplies steel.", score=0.9)
+    ]
+
+    p_re = "app.routers.graph_rag_router.resolve_entities"
+    p_ta = "app.routers.graph_rag_router.traverse_from_anchors"
+    p_rc = "app.routers.graph_rag_router.retrieve_constrained"
+    with patch(p_re, return_value=matches), \
+         patch(p_ta, return_value=traversal), \
+         patch(p_rc, return_value=chunks):
+        app = FastAPI()
+        app.include_router(router)
+        app.state.neo4j_driver = MagicMock()
+        app.state.embedding_provider = MagicMock()
+        app.state.generation_provider = TemplateGenerationProvider()
+        client = TestClient(app)
+        resp = client.post(
+            "/query/graph-rag",
+            json={"question": "Who supplies steel?"},
+            headers={"X-Api-Key": _VALID_KEY},
+        )
+
+    assert resp.status_code == 200
+    citations = resp.json()["text_citations"]
+    assert len(citations) == 1
+    assert citations[0]["doc_id"] == "CT-ACME-001"
+
+
+def test_graph_rag_text_citation_doc_id_empty_when_ranked_chunk_doc_id_empty() -> None:
+    """When RankedChunk.doc_id is empty, TextCitation.doc_id must also be empty.
+
+    Verifies the fix does not introduce a default or fall-back value —
+    an absent doc_id on the chunk stays absent in the citation.
+    """
+    matches = [
+        EntityMatch(node_id="C001", label="Company", name="Acme", score=1.0)
+    ]
+    traversal = GraphTraversalResult(chunk_ids=["c1"], triples=[])
+    # doc_id defaults to "" when not provided
+    chunks = [RankedChunk(chunk_id="c1", text="Acme supplies steel.", score=0.9)]
+
+    p_re = "app.routers.graph_rag_router.resolve_entities"
+    p_ta = "app.routers.graph_rag_router.traverse_from_anchors"
+    p_rc = "app.routers.graph_rag_router.retrieve_constrained"
+    with patch(p_re, return_value=matches), \
+         patch(p_ta, return_value=traversal), \
+         patch(p_rc, return_value=chunks):
+        app = FastAPI()
+        app.include_router(router)
+        app.state.neo4j_driver = MagicMock()
+        app.state.embedding_provider = MagicMock()
+        app.state.generation_provider = TemplateGenerationProvider()
+        client = TestClient(app)
+        resp = client.post(
+            "/query/graph-rag",
+            json={"question": "Who supplies steel?"},
+            headers={"X-Api-Key": _VALID_KEY},
+        )
+
+    assert resp.status_code == 200
+    citations = resp.json()["text_citations"]
+    assert len(citations) == 1
+    assert citations[0]["doc_id"] == ""
+
+
+def test_graph_rag_generate_called_with_chunk_doc_id() -> None:
+    """Spy confirms the exact doc_id value is passed into generate().
+
+    Wraps TemplateGenerationProvider.generate with a spy so the call
+    arguments are inspectable.  Asserts chunks[0]["doc_id"] in the generate
+    call matches the doc_id on the RankedChunk.
+    """
+    matches = [
+        EntityMatch(node_id="C001", label="Company", name="Acme", score=1.0)
+    ]
+    traversal = GraphTraversalResult(chunk_ids=["c1"], triples=[])
+    chunks = [RankedChunk(chunk_id="c1", doc_id="CT-SPY-002", text="Spy test text.", score=0.8)]
+
+    real_provider = TemplateGenerationProvider()
+    spy_generate = MagicMock(wraps=real_provider.generate)
+    real_provider.generate = spy_generate  # type: ignore[method-assign]
+
+    p_re = "app.routers.graph_rag_router.resolve_entities"
+    p_ta = "app.routers.graph_rag_router.traverse_from_anchors"
+    p_rc = "app.routers.graph_rag_router.retrieve_constrained"
+    with patch(p_re, return_value=matches), \
+         patch(p_ta, return_value=traversal), \
+         patch(p_rc, return_value=chunks):
+        app = FastAPI()
+        app.include_router(router)
+        app.state.neo4j_driver = MagicMock()
+        app.state.embedding_provider = MagicMock()
+        app.state.generation_provider = real_provider
+        client = TestClient(app)
+        client.post(
+            "/query/graph-rag",
+            json={"question": "Who supplies steel?"},
+            headers={"X-Api-Key": _VALID_KEY},
+        )
+
+    spy_generate.assert_called_once()
+    chunks_arg = spy_generate.call_args.kwargs["chunks"]
+    assert chunks_arg[0]["doc_id"] == "CT-SPY-002"
+
+
+def test_generation_provider_receives_chunk_doc_id() -> None:
+    """Router must pass chunk.doc_id into the chunks dict sent to generate().
+
+    Mocks the generation provider to inspect call_args directly.  Asserts the
+    router assembled chunks_dicts[0]["doc_id"] == "DOC-42" from the RankedChunk,
+    not from a hardcoded fallback.
+    """
+    matches = [
+        EntityMatch(node_id="C001", label="Company", name="Acme", score=1.0)
+    ]
+    traversal = GraphTraversalResult(chunk_ids=["c1"], triples=[])
+    chunks = [RankedChunk(chunk_id="c1", doc_id="DOC-42", text="Some text.", score=0.9)]
+
+    p_re = "app.routers.graph_rag_router.resolve_entities"
+    p_ta = "app.routers.graph_rag_router.traverse_from_anchors"
+    p_rc = "app.routers.graph_rag_router.retrieve_constrained"
+    with patch(p_re, return_value=matches), \
+         patch(p_ta, return_value=traversal), \
+         patch(p_rc, return_value=chunks):
+        app = FastAPI()
+        app.include_router(router)
+        app.state.neo4j_driver = MagicMock()
+        app.state.embedding_provider = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.generate.return_value = _make_graph_answer()
+        app.state.generation_provider = mock_provider
+        client = TestClient(app)
+        client.post(
+            "/query/graph-rag",
+            json={"question": "Who supplies steel?"},
+            headers={"X-Api-Key": _VALID_KEY},
+        )
+
+    mock_provider.generate.assert_called_once()
+    # The router calls generate(..., chunks=chunks_dicts) with keyword arg.
+    chunks_arg = mock_provider.generate.call_args.kwargs["chunks"]
+    assert chunks_arg[0]["doc_id"] == "DOC-42"
+
+
+def test_text_citations_doc_id_non_empty_when_ranked_chunk_carries_doc_id() -> None:
+    """doc_id from RankedChunk must appear in the HTTP response text_citations.
+
+    Uses the real TemplateGenerationProvider so the full path from
+    RankedChunk → chunks_dicts → TextCitation is exercised end-to-end.
+    """
+    matches = [
+        EntityMatch(node_id="C001", label="Company", name="Acme", score=1.0)
+    ]
+    traversal = GraphTraversalResult(chunk_ids=["c1"], triples=[])
+    chunks = [RankedChunk(chunk_id="c1", doc_id="DOC-42", text="Acme supplies steel.", score=0.9)]
+
+    p_re = "app.routers.graph_rag_router.resolve_entities"
+    p_ta = "app.routers.graph_rag_router.traverse_from_anchors"
+    p_rc = "app.routers.graph_rag_router.retrieve_constrained"
+    with patch(p_re, return_value=matches), \
+         patch(p_ta, return_value=traversal), \
+         patch(p_rc, return_value=chunks):
+        app = FastAPI()
+        app.include_router(router)
+        app.state.neo4j_driver = MagicMock()
+        app.state.embedding_provider = MagicMock()
+        app.state.generation_provider = TemplateGenerationProvider()
+        client = TestClient(app)
+        resp = client.post(
+            "/query/graph-rag",
+            json={"question": "Who supplies steel?"},
+            headers={"X-Api-Key": _VALID_KEY},
+        )
+
+    assert resp.status_code == 200
+    citations = resp.json()["text_citations"]
+    assert len(citations) == 1
+    assert citations[0]["doc_id"] == "DOC-42"

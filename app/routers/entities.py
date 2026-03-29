@@ -134,12 +134,24 @@ def get_entity(
             detail=f"{entity_type} with id {entity_id!r} not found",
         )
     node = row["n"]
+
+    # IDOR ownership check: if the node records an ingest_key, only the API key
+    # that ingested it may read it.  Nodes without ingest_key (legacy data or
+    # types not owned by a single key) are accessible to any authenticated caller.
+    node_props = dict(node)
+    ingest_key: str | None = node_props.get("ingest_key")
+    if ingest_key is not None and ingest_key != _api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
     raw_edges: list[dict[str, Any]] = row["edges"]
 
     # All node properties except the embedding vector — it is internal
     # infrastructure (vector search index) and not meaningful to callers.
     properties: dict[str, Any] = {
-        k: v for k, v in dict(node).items() if k != "embedding"
+        k: v for k, v in node_props.items() if k != "embedding"
     }
 
     edges = [

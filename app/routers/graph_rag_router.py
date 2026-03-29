@@ -177,7 +177,7 @@ async def query_graph_rag(
         for t in traversal.triples
     ]
     chunks_dicts = [
-        {"doc_id": "", "chunk_id": c.chunk_id, "text": c.text}
+        {"doc_id": c.doc_id, "chunk_id": c.chunk_id, "text": c.text}
         for c in chunks
     ]
     t2 = time.monotonic()

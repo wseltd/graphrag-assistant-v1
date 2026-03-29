@@ -322,3 +322,175 @@ def test_get_benchmark_results_returns_200() -> None:
     data = resp.json()
     assert data["run_id"] == run_id
     assert len(data["query_results"]) == 20
+
+
+# ---------------------------------------------------------------------------
+# Tests for _graph_rag_fn output structure (3 required by T009)
+# ---------------------------------------------------------------------------
+
+from app.pipelines.citation_generator import Citation, GenerationResult  # noqa: E402
+from graphrag_assistant.schemas import AnswerSchema, RetrievalDebug, TextCitation  # noqa: E402
+
+
+def _make_plain_answer() -> AnswerSchema:
+    return AnswerSchema(
+        answer="plain answer",
+        graph_evidence=[],
+        text_citations=[TextCitation(doc_id="doc1", chunk_id="ch1", quote="text excerpt")],
+        retrieval_debug=RetrievalDebug(
+            graph_query=None,
+            entity_matches=[],
+            retrieved_node_ids=[],
+            chunk_ids=["ch1"],
+            timings={},
+        ),
+        mode="plain_rag",
+    )
+
+
+def _make_graph_gen_result() -> GenerationResult:
+    return GenerationResult(
+        answer="graph answer",
+        text_citations=[Citation(chunk_id="ch1", quote="some text", doc_id="doc1")],
+    )
+
+
+def _capture_fn_results(app: FastAPI) -> tuple[dict, dict]:
+    """Post to /benchmark/run; spy on run_benchmark to capture fn outputs.
+
+    Both _plain_rag_fn and _graph_rag_fn are called inside the spy while all
+    patches are still active, ensuring the patched run_graph_rag and
+    PlainRagPipeline are in effect.
+    """
+    captured: dict = {}
+
+    mock_pipeline_inst = MagicMock()
+    mock_pipeline_inst.execute.return_value = _make_plain_answer()
+
+    mock_gen_result = _make_graph_gen_result()
+
+    def _spy(queries, answers, plain_rag_fn, graph_rag_fn):
+        captured["plain_result"] = plain_rag_fn("what is X?")
+        captured["graph_result"] = graph_rag_fn("what is X?")
+        return {
+            "run_id": "abcd1234abcd1234",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "query_results": [],
+            "summary": {},
+        }
+
+    with (
+        patch("app.benchmark.router.load_benchmark_data", return_value=([], [])),
+        patch("app.benchmark.router.run_benchmark", side_effect=_spy),
+        patch("app.benchmark.router.save_result", return_value="out.json"),
+        patch("app.benchmark.router.run_graph_rag", return_value=mock_gen_result),
+        patch("app.benchmark.router.PlainRagPipeline", return_value=mock_pipeline_inst),
+    ):
+        client = TestClient(app)
+        resp = client.post("/benchmark/run", headers=_HEADERS)
+
+    assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+    return captured["plain_result"], captured["graph_result"]
+
+
+def test_graph_rag_fn_result_top_level_keys_match_plain_rag_fn() -> None:
+    # Both callables must return dicts with exactly the same top-level keys so
+    # run_benchmark and scoring functions can consume them identically.
+    app = FastAPI()
+    app.include_router(router)
+    app.state.neo4j_driver = MagicMock()
+    app.state.embedding_provider = MagicMock()
+    app.state.generation_provider = MagicMock()
+
+    plain_result, graph_result = _capture_fn_results(app)
+
+    assert set(plain_result.keys()) == set(graph_result.keys())
+
+
+def test_graph_rag_fn_text_citation_has_doc_id_field() -> None:
+    # doc_id must be present in every text_citations item so the benchmark
+    # output shape is structurally identical to plain_rag.
+    app = FastAPI()
+    app.include_router(router)
+    app.state.neo4j_driver = MagicMock()
+    app.state.embedding_provider = MagicMock()
+    app.state.generation_provider = MagicMock()
+
+    _, graph_result = _capture_fn_results(app)
+
+    assert len(graph_result["text_citations"]) > 0
+    for citation in graph_result["text_citations"]:
+        assert "doc_id" in citation, f"citation missing doc_id: {citation}"
+
+
+def test_graph_rag_fn_text_citation_has_quote_not_excerpt() -> None:
+    # Regression: _graph_rag_fn previously used the old field name `excerpt`.
+    # After Bug 5 renamed Citation.excerpt → Citation.quote, the output key
+    # must be `quote` to match TextCitation and plain_rag text_citations shape.
+    app = FastAPI()
+    app.include_router(router)
+    app.state.neo4j_driver = MagicMock()
+    app.state.embedding_provider = MagicMock()
+    app.state.generation_provider = MagicMock()
+
+    _, graph_result = _capture_fn_results(app)
+
+    assert len(graph_result["text_citations"]) > 0
+    for citation in graph_result["text_citations"]:
+        assert "quote" in citation, f"citation missing quote: {citation}"
+        assert "excerpt" not in citation, f"citation should not have excerpt: {citation}"
+
+
+def test_graph_rag_fn_retrieval_debug_populated_from_pipeline_stages() -> None:
+    # Regression: _graph_rag_fn previously hardcoded empty lists for
+    # entity_matches, retrieved_node_ids, and chunk_ids.  After the fix those
+    # fields must be populated from the real pipeline stage outputs.
+    from app.pipelines.entity_resolver import EntityMatch
+    from app.pipelines.graph_traversal import GraphTraversalResult
+
+    app = FastAPI()
+    app.include_router(router)
+    mock_driver = MagicMock()
+    mock_session = MagicMock()
+    mock_driver.session.return_value.__enter__ = lambda s: mock_session
+    mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+    app.state.neo4j_driver = mock_driver
+    app.state.embedding_provider = MagicMock()
+    app.state.generation_provider = MagicMock()
+
+    captured: dict = {}
+    mock_entities = [
+        EntityMatch(node_id="node-1", label="Company", name="Acme Corp", score=1.0),
+        EntityMatch(node_id="node-2", label="Contract", name="Contract A", score=0.8),
+    ]
+    mock_traversal = GraphTraversalResult(chunk_ids=["ck-1", "ck-2"], triples=[])
+    mock_gen_result = _make_graph_gen_result()
+
+    def _spy(queries, answers, plain_rag_fn, graph_rag_fn):
+        captured["graph_result"] = graph_rag_fn("Acme Corp contract terms")
+        return {
+            "run_id": "deadbeef00000000",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "query_results": [],
+            "summary": {},
+        }
+
+    with (
+        patch("app.benchmark.router.load_benchmark_data", return_value=([], [])),
+        patch("app.benchmark.router.run_benchmark", side_effect=_spy),
+        patch("app.benchmark.router.save_result", return_value="out.json"),
+        patch("app.benchmark.router.run_graph_rag", return_value=mock_gen_result),
+        patch("app.benchmark.router.resolve_entities", return_value=mock_entities),
+        patch("app.benchmark.router.traverse_from_anchors", return_value=mock_traversal),
+        patch("app.benchmark.router.retrieve_constrained", return_value=[]),
+    ):
+        client = TestClient(app)
+        resp = client.post("/benchmark/run", headers=_HEADERS)
+
+    assert resp.status_code == 202
+    debug = captured["graph_result"]["retrieval_debug"]
+    # entity_matches and retrieved_node_ids come from resolve_entities node IDs
+    assert debug["entity_matches"] == ["node-1", "node-2"]
+    assert debug["retrieved_node_ids"] == ["node-1", "node-2"]
+    # chunk_ids come from traversal.chunk_ids
+    assert debug["chunk_ids"] == ["ck-1", "ck-2"]

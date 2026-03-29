@@ -112,7 +112,7 @@ inbound DIRECTOR_OF edges from each co-party to their directors.
 
 **Query: What is the liability cap under contract K001?**
 
-The entity resolver matches `K001` directly to the Contract node (no fuzzy matching
+The entity resolver matches `K001` directly to the Contract (no fuzzy matching
 needed). Traversal follows HAS_CLAUSE edges to clause text. The constrained retrieval
 returns only chunks linked to K001.
 

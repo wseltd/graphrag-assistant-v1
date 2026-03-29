@@ -1,6 +1,8 @@
 """Tests for app/pipelines/citation_generator.py (T025.d)."""
 from __future__ import annotations
 
+import dataclasses
+
 from app.pipelines.citation_generator import (
     Citation,
     GenerationResult,
@@ -135,14 +137,34 @@ class TestTextCitations:
         result = generate_answer("q", [_chunk("abc-123", "some text")], [])
         assert result.text_citations[0].chunk_id == "abc-123"
 
-    def test_excerpt_truncated_to_max(self):
+    def test_quote_truncated_to_max(self):
         long_text = "x" * 300
         result = generate_answer("q", [_chunk("c1", long_text)], [])
-        assert len(result.text_citations[0].excerpt) == 200
+        assert len(result.text_citations[0].quote) == 200
 
-    def test_excerpt_short_text_unchanged(self):
+    def test_quote_short_text_unchanged(self):
         result = generate_answer("q", [_chunk("c1", "short text")], [])
-        assert result.text_citations[0].excerpt == "short text"
+        assert result.text_citations[0].quote == "short text"
+
+    def test_citation_field_is_named_quote_not_excerpt(self):
+        # Regression: Citation used to have `excerpt`; aligning with TextCitation.quote
+        # removes the field-name mismatch that caused benchmark/router.py to output
+        # the wrong key name.
+        citation = Citation(chunk_id="c1", quote="some text")
+        assert hasattr(citation, "quote")
+        assert not hasattr(citation, "excerpt")
+
+    def test_citation_field_is_named_quote(self):
+        # Structural guard: dataclasses.fields() is authoritative — hasattr passes even
+        # if a property or __getattr__ shim fakes the name.
+        field_names = {f.name for f in dataclasses.fields(Citation)}
+        assert "quote" in field_names
+
+    def test_citation_has_no_excerpt_field(self):
+        # Structural guard: ensures the rename from `excerpt` to `quote` is permanent
+        # at the dataclass level, not just masked by an attribute alias.
+        field_names = {f.name for f in dataclasses.fields(Citation)}
+        assert "excerpt" not in field_names
 
     def test_empty_chunks_empty_citations(self):
         result = generate_answer("q", [], [_triple("a", "R", "b")])

@@ -110,6 +110,56 @@ def test_nonexistent_entity_id_detail_contains_entity_type() -> None:
     assert "Person" in resp.json()["detail"]
 
 
+# ---------------------------------------------------------------------------
+# Unit test 5 — node owned by a different key returns 403
+# ---------------------------------------------------------------------------
+
+
+def test_node_owned_by_different_key_returns_403() -> None:
+    """When a node's ingest_key does not match the caller's API key, return 403."""
+    mock_row = {"n": {"id": "co1", "ingest_key": "other-key"}, "edges": []}
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.run.return_value = iter([mock_row])
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value = mock_session
+
+    app = _build_app(mock_driver)
+    client = TestClient(app)
+
+    resp = client.get("/entities/Company/co1")
+
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Unit test 6 — node owned by the caller's key returns 200
+# ---------------------------------------------------------------------------
+
+
+def test_node_owned_by_caller_key_returns_200() -> None:
+    """When a node's ingest_key matches the caller's API key, return 200."""
+    mock_row = {"n": {"id": "co1", "ingest_key": "test-key"}, "edges": []}
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.run.return_value = iter([mock_row])
+
+    mock_driver = MagicMock()
+    mock_driver.session.return_value = mock_session
+
+    app = _build_app(mock_driver)
+    client = TestClient(app)
+
+    resp = client.get("/entities/Company/co1")
+
+    assert resp.status_code == 200
+
+
 # ===========================================================================
 # Integration fixtures
 # ===========================================================================

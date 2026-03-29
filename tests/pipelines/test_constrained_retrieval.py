@@ -25,8 +25,8 @@ def _make_store(*results: dict) -> MagicMock:
     return store
 
 
-def _chunk(chunk_id: str, text: str, score: float) -> dict:
-    return {"chunk_id": chunk_id, "text": text, "score": score}
+def _chunk(chunk_id: str, text: str, score: float, doc_id: str = "") -> dict:
+    return {"chunk_id": chunk_id, "text": text, "score": score, "doc_id": doc_id}
 
 
 # ---------------------------------------------------------------------------
@@ -183,3 +183,41 @@ class TestRankingOrder:
         assert len(result) == 1
         assert result[0].chunk_id == "c1"
         assert result[0].score == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# doc_id field tests (T005)
+# ---------------------------------------------------------------------------
+
+
+class TestDocId:
+    """doc_id is preserved from vector store results and defaults to ""."""
+
+    def test_doc_id_preserved_from_search_result(self) -> None:
+        store = _make_store(
+            {"chunk_id": "c1", "text": "some text", "score": 0.9, "doc_id": "contract-42"},
+        )
+        result = retrieve_constrained(
+            query="q",
+            allowed_chunk_ids=["c1"],
+            vector_store=store,
+        )
+        assert len(result) == 1
+        assert result[0].doc_id == "contract-42"
+
+    def test_doc_id_defaults_to_empty_when_absent_from_result(self) -> None:
+        # Use a raw dict with no doc_id key so this test fails if the
+        # implementation uses r["doc_id"] instead of r.get("doc_id", "").
+        store = _make_store({"chunk_id": "c1", "text": "text", "score": 0.8})
+        result = retrieve_constrained(
+            query="q",
+            allowed_chunk_ids=["c1"],
+            vector_store=store,
+        )
+        assert len(result) == 1
+        assert result[0].doc_id == ""
+
+    def test_ranked_chunk_doc_id_field_defaults_to_empty_string(self) -> None:
+        # Positional constructor must still work without doc_id — existing tests depend on this.
+        chunk = RankedChunk(chunk_id="x", text="y", score=0.5)
+        assert chunk.doc_id == ""
