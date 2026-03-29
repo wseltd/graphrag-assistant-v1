@@ -9,11 +9,3 @@ build/
 *.log
 .env
 
-# Saturnday governance working files — never push to GitHub
-CLAUDE.md
-plan.json
-saturnday-state.json
-saturnday-progress.log
-.saturnday/
-.saturnday-repair-*/
-.saturnday-policy.yaml
