@@ -2,9 +2,11 @@
 
 Coverage:
 - router_registration  (1): all expected path prefixes present after app init
-- lifespan             (2): successful startup stores providers; unreachable Neo4j raises
+- graph_rag_plain_rag  (2): /query/graph-rag and /query/plain-rag registered by
+  create_app(); regression guard for T001 (routers were imported but not included)
+- lifespan             (3): successful startup stores providers; unreachable Neo4j raises
   RuntimeError
-- dependency_injection (3): driver injected from state; override replaces provider;
+- dependency_injection (4): driver injected from state; override replaces provider;
   missing key → 500
 """
 from __future__ import annotations
