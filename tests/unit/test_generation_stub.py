@@ -121,17 +121,17 @@ def test_mode_graph_rag(provider: TemplateGenerationProvider) -> None:
     assert result.mode == "graph_rag"
 
 
-def test_citation_quote_truncated_at_120_chars(
+def test_citation_quote_truncated_at_200_chars(
     provider: TemplateGenerationProvider,
 ) -> None:
-    long_text = "x" * 200
+    long_text = "x" * 300
     chunk = {"doc_id": "doc:1", "chunk_id": "chunk:1", "text": long_text}
     result = provider.generate(
         "[mode:plain_rag] Query",
         graph_facts=[],
         chunks=[chunk],
     )
-    assert len(result.text_citations[0].quote) == 120
+    assert len(result.text_citations[0].quote) == 200
 
 
 def test_isinstance_check(provider: TemplateGenerationProvider) -> None:

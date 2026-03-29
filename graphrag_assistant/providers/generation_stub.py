@@ -21,7 +21,7 @@ from graphrag_assistant.schemas import (
 )
 
 _MODE_PREFIX_RE = re.compile(r"^\[mode:([^\]]+)\]")
-_QUOTE_MAX = 120
+_QUOTE_MAX = 200
 _FALLBACK_ANSWER = (
     "No graph evidence or text chunks were retrieved for this query."
 )
